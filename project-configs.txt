@@ -1,0 +1,208 @@
+# tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "types": ["node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+
+---
+# .swcrc
+{
+  "jsc": {
+    "parser": {
+      "syntax": "typescript",
+      "tsx": false,
+      "decorators": false,
+      "dynamicImport": true
+    },
+    "target": "es2022",
+    "loose": false,
+    "minify": {
+      "compress": {
+        "drop_console": false
+      },
+      "mangle": false
+    }
+  },
+  "module": {
+    "type": "es6"
+  },
+  "minify": true,
+  "sourceMaps": true
+}
+
+---
+# wrangler.toml
+name = "interactive-mural"
+compatibility_date = "2024-01-01"
+
+[site]
+bucket = "./dist"
+
+[build]
+command = "npm run build"
+watch_paths = ["src/**/*"]
+
+[[routes]]
+pattern = "mural.example.com/*"
+zone_name = "example.com"
+
+[env.production]
+name = "interactive-mural-prod"
+
+[env.staging]
+name = "interactive-mural-staging"
+
+---
+# .gitignore
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
+.env
+.env.local
+coverage/
+.turbo/
+
+---
+# .github/workflows/deploy.yml
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - run: npm ci
+      
+      - run: npm run build
+      
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: interactive-mural
+          directory: dist
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref == 'refs/heads/main' && 'main' || github.head_ref }}
+
+---
+# README.md
+# Interactive SVG Project Mural
+
+A high-performance interactive project showcase using SVG with native browser hit-testing.
+
+## Features
+
+- ✨ Native SVG hit-testing (no libraries needed)
+- 🎯 Per-element hover detection with rAF throttling
+- 🎨 SVG mask-based highlighting (sharp at any zoom)
+- 📱 Responsive and touch-friendly
+- ⚡ Optimized for thousands of elements
+- 🚀 Cloudflare Pages deployment ready
+
+## Architecture
+
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────┐
+│   SVG DOM   │────▶│ Pointer Events│────▶│   rAF Loop  │
+└─────────────┘     └──────────────┘     └─────────────┘
+                           │                      │
+                           ▼                      ▼
+                    ┌──────────────┐      ┌─────────────┐
+                    │   Tooltip    │      │  SVG Mask   │
+                    └──────────────┘      └─────────────┘
+```
+
+## Quick Start
+
+```bash
+# Install dependencies
+npm install
+
+# Development
+npm run dev
+
+# Build for production
+npm run build
+
+# Deploy to Cloudflare
+npm run deploy
+```
+
+## Project Structure
+
+```
+├── src/
+│   ├── index.html      # Main HTML with inline SVG
+│   ├── mural.ts        # TypeScript controller
+│   └── assets/         # Static assets
+├── dist/               # Build output
+├── wrangler.toml       # Cloudflare config
+└── package.json        # Dependencies
+```
+
+## Performance Notes
+
+- Handles 1000+ interactive elements smoothly
+- Use spatial indexing (rbush) for 10k+ elements
+- Consider Web Workers for heavy computations
+- WASM only needed for 50k+ complex polygons
+
+## Deployment
+
+1. Set up Cloudflare Pages project
+2. Add secrets to GitHub:
+   - `CLOUDFLARE_API_TOKEN`
+   - `CLOUDFLARE_ACCOUNT_ID`
+3. Push to main branch to auto-deploy
+
+## Extending
+
+To add more projects, edit the `projects` object in `mural.ts`:
+
+```typescript
+"project-id": {
+  title: "Project Name",
+  href: "/projects/path",
+  blurb: "Short description"
+}
+```
+
+## License
+
+MIT
