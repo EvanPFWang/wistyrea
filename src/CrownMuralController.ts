@@ -77,8 +77,8 @@ export class CrownMuralController {
     try {
       // Parallel loading for faster startup
       const [metadata, palette] = await Promise.all([
-        fetch('/data/metadata.json').then(r => r.json()),
-        fetch('/data/palette.json').then(r => r.json()).catch(() => null)
+        fetch('public/data/metadata.json').then(r => r.json()),
+        fetch('public/data/palette.json').then(r => r.json()).catch(() => null)
       ]);
       
       this.metadata = metadata;
