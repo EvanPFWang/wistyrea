@@ -276,8 +276,8 @@ def export_background_and_idmap(
     hier: np.ndarray,
     shape_hw: Tuple[int, int],
     *,
-    out_bg: str = "mask_background.png",
-    out_idmap: str = "id_map.png",
+    out_bg: str = "\public\data\mask_background.png",
+    out_idmap: str = "\public\data\id_map.png",
 ) -> int:
     """
     Generate two raster outputs: "mask_background.png" and "id_map.png".
@@ -549,19 +549,19 @@ def process_image(
         contours,
         hierarchy,
         filled.shape,
-        out_bg="mask_background.png",
+        out_bg="\public\data\mask_background.png",
         out_idmap="id_map.png",
     )
     export_metadata(
         contours,
         hierarchy,
         filled.shape,
-        out_json="metadata.json",
+        out_json="\public\data\metadata.json",
         masks_dir=out_masks_dir,
     )
     #If palette is defined, persist it so the web app can use the same colours
     if palette is not None:
-        export_palette_json(palette, out_json="palette.json")
+        export_palette_json(palette, out_json="\public\data\palette.json")
 
     return edges_closed, filled, color_map, contours, hierarchy, saved_masks
 #---------- CLI ----------

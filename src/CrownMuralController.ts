@@ -152,7 +152,7 @@ export class CrownMuralController {
         resolve();
       };
       img.onerror = () => reject(new Error('Failed to load colored regions'));
-      img.src = '/coloured_regions.png';
+      img.src = '/data/coloured_regions.png';
     });
   }
   
