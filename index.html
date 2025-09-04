@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crown Mural - Interactive</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      overflow: hidden;
+    }
+    
+    #container {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    #mural-canvas {
+      max-width: 100%;
+      max-height: 100%;
+      cursor: crosshair;
+      image-rendering: crisp-edges;
+    }
+    
+    #id-canvas {
+      display: none;
+    }
+    
+    #loading {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 18px;
+      color: gold;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    #tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: rgba(10, 10, 10, 0.95);
+      border: 1px solid rgba(255, 215, 0, 0.3);
+      border-radius: 6px;
+      padding: 12px 16px;
+      font-size: 14px;
+      transform: translate(8px, -8px);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      display: none;
+      z-index: 1000;
+      max-width: 280px;
+      will-change: transform;
+    }
+    
+    #tooltip strong {
+      color: gold;
+      display: block;
+      margin-bottom: 4px;
+      font-size: 15px;
+    }
+    
+    #tooltip .blurb {
+      color: #999;
+      line-height: 1.4;
+    }
+    
+    #stats {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 8px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: 'SF Mono', Monaco, monospace;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="loading">Loading crown mural regions...</div>
+    
+    <canvas id="mural-canvas"></canvas>
+    <canvas id="id-canvas"></canvas>
+  </div>
+  
+  <div id="tooltip">
+    <strong></strong>
+    <div class="blurb"></div>
+  </div>
+  
+  <div id="stats">
+    <div>Regions: <span id="region-count">0</span></div>
+    <div>Current: <span id="current-region">-</span></div>
+    <div>FPS: <span id="fps">0</span></div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
