@@ -577,6 +577,9 @@ if __name__ == "__main__":
     )
     parser.add_argument("image", nargs="?", help="Path to input image", default=r"\..")
     parser.add_argument("--image", dest="image_opt", help="Alternative to positional image path")
+    """        out_overlay_path=args.overlay,
+        out_filled_path=args.filled,
+        out_color_path=args.color,"""
     parser.add_argument("--overlay", default="contours_overlay.png", help="Output: contours overlay (BGR)")
     parser.add_argument("--filled",  default="filled_mask.png",      help="Output: filled binary mask")
     parser.add_argument("--color",   default="coloured_regions.png", help="Output: per-region coloured map")
