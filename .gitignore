@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .venv/
 
+
 # Build outputs
 dist/
 .wrangler/
@@ -30,3 +31,5 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+/.venv39
+
