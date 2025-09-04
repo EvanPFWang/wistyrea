@@ -593,7 +593,7 @@ if __name__ == "__main__":
     parser.add_argument("--overlay", default="contours_overlay.png", help="Output: contours overlay (BGR)")
     parser.add_argument("--filled",  default="filled_mask.png",      help="Output: filled binary mask")
     parser.add_argument("--color",   default="coloured_regions.png", help="Output: per-region coloured map")
-    parser.add_argument("--masks_dir", default="shape_masks",        help="Output dir for per-region masks")
+    parser.add_argument("--masks_dir", default="public\data\shape_masks",        help="Output dir for per-region masks")
     parser.add_argument("--blur", type=int, default=1, help="Gaussian blur kernel (odd). 1 disables smoothing")
     parser.add_argument("--canny_sigma", type=float, default=0.33, help="Auto-Canny sigma")
     parser.add_argument("--close", dest="gap_close", type=int, default=1,
