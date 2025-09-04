@@ -281,11 +281,9 @@ def export_background_and_idmap(
 ) -> int:
     """
     Generate two raster outputs: "mask_background.png" and "id_map.png".
-
     * "mask_background.png" is a single‑channel image where all pixels
       belonging to any region are 0 and the background is 255.  This
       simplifies background detection on the front end.
-
     * "id_map.png" encodes the region id in the three RGB channels.  The
       encoding uses a 24‑bit integer: "R = (id >> 16) & 255",
       "G = (id >> 8) & 255", "B = id & 255".  Region ids start at
