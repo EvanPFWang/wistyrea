@@ -531,31 +531,35 @@ def process_image(
 
     script_path = Path(__file__).resolve()
     repo_root = script_path.parent.parent
-    new_output_dir = repo_root / "public" / "data" / "shape_masks"
+    data_dir = (repo_root / "public" / "data").resolve()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    masks_dir_path = data_dir / "shape_masks"
+    masks_dir_path.mkdir(parents=True, exist_ok=True)
+
     saved_masks = export_shape_masks(
         contours=contours,
         hier=hierarchy,
         shape_hw=filled.shape,
-        out_dir=new_output_dir,
-        mask_mode=mask_mode
+        out_dir=masks_dir_path,
+        mask_mode=mask_mode,
     )
 
-    print(f"Shape masks are being exported to: {new_output_dir}")
+    print(f"Shape masks are being exported to: {masks_dir_path}")
 
     #Export background + ID map and metadata
     num_regions = export_background_and_idmap(
         contours,
         hierarchy,
         filled.shape,
-        out_bg="\public\data\mask_background.png",
-        out_idmap="id_map.png",
+        out_bg=str(data_dir / "mask_background.png"),
+        out_idmap=str(data_dir / "id_map.png"),
     )
     export_metadata(
         contours,
         hierarchy,
         filled.shape,
-        out_json="\public\data\metadata.json",
-        masks_dir=out_masks_dir,
+        out_json=str(data_dir / "metadata.json"),
+        masks_dir="shape_masks",
     )
     #If palette is defined, persist it so the web app can use the same colours
     if palette is not None:
