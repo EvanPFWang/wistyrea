@@ -31,6 +31,18 @@ import cv2 as cv
 import numpy as np
 import json
 
+def _repo_root_from_this_file() -> Path:
+    #assumes this file lives at repo_root/scripts/regions.py (adjust .. count if needed)
+    return Path(__file__).resolve().parents[1]
+
+def _abs_out(p: str | Path, base: Path) -> Path:
+    """
+    If p is absolute (or drive-rooted on Windows like '\\foo'), use it as-is,
+    otherwise write under 'base'.
+    """
+    p = Path(p)
+    return p if p.is_absolute() else (base / p)
+
 def auto_canny(gray: np.ndarray, sigma: float = 0.33,
                aperture_size: int = 3, L2: bool = True) -> np.ndarray:
     v = float(np.median(gray))
@@ -46,11 +58,9 @@ def close_gaps(edges: np.ndarray, ksize: int = 3,
     k = cv.getStructuringElement(shape, (ksize, ksize))
     return cv.morphologyEx(edges, cv.MORPH_CLOSE, k, iterations=iters)
 
-
 def threshold_otsu(gray: np.ndarray) -> np.ndarray:
     _, th = cv.threshold(gray, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU)
     return th
-
 
 def _depth(idx: int, hier: np.ndarray) -> int:
     """Return the depth of contour `idx` in the hierarchy."""
@@ -523,16 +533,25 @@ def process_image(
     color_map = colorize_regions(contours, hierarchy, filled.shape, palette=palette)
     overlay   = draw_overlay(img, contours, color=(0,255,0), thick=2)
 
-    #Write visual outputs
-    cv.imwrite(out_overlay_path, overlay)
-    cv.imwrite(out_filled_path, filled)
-    cv.imwrite(out_color_path, color_map)
-
-
-    script_path = Path(__file__).resolve()
-    repo_root = script_path.parent.parent
+    repo_root = _repo_root_from_this_file()
     data_dir = (repo_root / "public" / "data").resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    #masks_dir: honor absolute paths; otherwise force under public/data
+    masks_dir_path = _abs_out(out_masks_dir, data_dir)
+    masks_dir_path.mkdir(parents=True, exist_ok=True)
+
+    #Normalize preview outputs too: if caller passed bare names, send to public/data
+    overlay_path = _abs_out(out_overlay_path, data_dir)
+    filled_path = _abs_out(out_filled_path, data_dir)
+    color_path = _abs_out(out_color_path, data_dir)
+
+    # Write visual outputs (anchored)
+    cv.imwrite(str(overlay_path), overlay)
+    cv.imwrite(str(filled_path), filled)
+    cv.imwrite(str(color_path), color_map)
+
+
     masks_dir_path = data_dir / "shape_masks"
     masks_dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -543,6 +562,21 @@ def process_image(
         out_dir=masks_dir_path,
         mask_mode=mask_mode,
     )
+
+    try:
+        #pref returned order else fallback to alphabetical in folder
+        mask_paths = list(saved_masks) if saved_masks else sorted(masks_dir_path.glob("*.png"))
+        for idx, p in enumerate(mask_paths):
+            p = Path(p)
+            target = masks_dir_path / f"shape_{idx:03d}.png"
+            if p.resolve() != target.resolve():
+                if target.exists():
+                    target.unlink()
+                p.rename(target)
+    except Exception as e:
+        print(f"[warn] rename masks: {e}")
+
+
 
     print(f"Shape masks are being exported to: {masks_dir_path}")
 
@@ -559,11 +593,11 @@ def process_image(
         hierarchy,
         filled.shape,
         out_json=str(data_dir / "metadata.json"),
-        masks_dir="shape_masks",
+        masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),
     )
     #If palette is defined, persist it so the web app can use the same colours
     if palette is not None:
-        export_palette_json(palette, out_json="\public\data\palette.json")
+        export_palette_json(palette, out_json=str(data_dir / "palette.json"))
 
     return edges_closed, filled, color_map, contours, hierarchy, saved_masks
 #---------- CLI ----------
