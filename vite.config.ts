@@ -3,15 +3,7 @@ import { resolve } from 'path';
 
 export default defineConfig({
   build: {
-    target: 'es2022',
-    minify: 'terser',
-    terserOptions: {
-      compress: {
-        drop_console: true,
-        drop_debugger: true,
-        pure_funcs: ['console.log']
-      }
-    },
+    target: 'es2022', // remove minify: 'terser' and terserOptions: { ... }
     rollupOptions: {
       output: {
         manualChunks: {
@@ -19,7 +11,7 @@ export default defineConfig({
         }
       }
     }
-  },
+  },esbuild: {drop: ['console', 'debugger'],pure: ['console.log']},
   server: {
     port: 3000
   }
