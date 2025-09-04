@@ -7,7 +7,7 @@
     "build": "npm run process:image && vite build",
     "build:vite-only": "vite build",
     "preview": "vite preview",
-    "process:image": ".venv39\\Scripts\\python.exe scripts/regions.py Mural_Crown_of_Italian_City.svg.png --blur 1 --close 1 --min_area 20 --canny_sigma 0.25 --palette_mode kbatch --sample_step 7 --output_dir public/data",
+    "process:image": ".venv39\\Scripts\\python.exe scripts/regions.py Mural_Crown_of_Italian_City.svg.png --blur 1 --close 1 --min_area 5 --canny_sigma 0.25 --mask_mode all --palette_mode kbatch --sample_step 7",
     "deploy": "npm run build"
   },
   "devDependencies": {
