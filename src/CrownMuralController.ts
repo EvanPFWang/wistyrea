@@ -152,7 +152,7 @@ export class CrownMuralController {
         resolve();
       };
       img.onerror = () => reject(new Error('Failed to load colored regions'));
-      img.src = '/data/coloured_regions.png';
+      img.src = 'public/data/coloured_regions.png';
     });
   }
   
@@ -171,7 +171,7 @@ export class CrownMuralController {
         resolve();
       };
       img.onerror = () => reject(new Error('Failed to load ID map'));
-      img.src = '/data/id_map.png';
+      img.src = 'public/data/id_map.png';
     });
   }
   
