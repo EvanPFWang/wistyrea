@@ -530,9 +530,19 @@ def process_image(
     cv.imwrite(out_filled_path, filled)
     cv.imwrite(out_color_path, color_map)
 
-    #Export per‑region masks in stable order
-    saved_masks = export_shape_masks(contours, hierarchy, filled.shape, Path(out_masks_dir), mask_mode=mask_mode)
 
+    script_path = Path(__file__).resolve()
+    repo_root = script_path.parent.parent
+    new_output_dir = repo_root / "public" / "data" / "shape_masks"
+    saved_masks = export_shape_masks(
+        contours=contours,
+        hier=hierarchy,
+        shape_hw=filled.shape,
+        out_dir=new_output_dir,
+        mask_mode=mask_mode
+    )
+
+    print(f"Shape masks are being exported to: {new_output_dir}")
 
     #Export background + ID map and metadata
     num_regions = export_background_and_idmap(
