@@ -25,6 +25,13 @@ export interface Region {
   mask: string;
   project?: ProjectInfo;
 }
+export type RGB = { r: number; g: number; b: number };
+//export type Palette = Hex[] | Record<string, Hex>;
+export type Hex = `#${string}`;
+export interface Palette {
+  background_id: number;
+  map: Record<string, RGB>;
+}
 
 export interface Metadata {
   version: string;

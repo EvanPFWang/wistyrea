@@ -1,28 +1,70 @@
 // src/CrownMuralController.ts
-interface Region {
-  id: number;
-  bbox: { x: number; y: number; width: number; height: number };
-  centroid: { x: number; y: number };
-  mask: string;
-  project?: {
-    title: string;
-    href: string;
-    blurb: string;
-  };
+import {RGB, Hex, Palette, Metadata,Region, ProjectType} from "./types.ts";
+
+const BASE = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '/');
+const url = (p: string) => `${BASE}${p.replace(/^\/+/, '')}`;
+// helper with good errors + optional null
+
+async function fetchJSON<T>(path: string, { optional = false } = {}): Promise<T | null> {
+  const res = await fetch(url(path), { cache: 'no-cache' }); // or 'force-cache' for CDN caching
+  if (!res.ok) {
+    if (optional && res.status === 404) return null;
+    throw new Error(`Failed to fetch ${path}: ${res.status} ${res.statusText}`);
+  }
+  return (await res.json()) as T;
+}
+const HEX_RE = /^#?(?<r>[0-9a-fA-F]{2})(?<g>[0-9a-fA-F]{2})(?<b>[0-9a-fA-F]{2})$/;
+//kept sync for less overhead/await backup
+function normalizePaletteToRGB(raw: unknown): Palette {
+  const any = raw as any;
+
+  if (any && typeof any === 'object' && 'map' in any) {
+    const bg = Number(any.background_id ?? 0);
+    const m = any.map as Record<string, unknown>;
+    const first = Object.values(m)[0];
+
+    if (first && typeof first === 'object' && first !== null && 'r' in (first as any)) {
+      // Already RGB
+      return { background_id: bg, map: m as Record<string, RGB> };
+    }
+    // Assume hex → RGB
+    const map = Object.fromEntries(
+      Object.entries(m).map(([k, v]) => [k, typeof v === 'string' ? hexToRGB(v) : { r: 0, g: 0, b: 0 }])
+    ) as Record<string, RGB>;
+    return { background_id: bg, map };
+  }
+
+  // Plain map at root
+  const m = (any ?? {}) as Record<string, unknown>;
+  const map = Object.fromEntries(
+    Object.entries(m).map(([k, v]) =>
+      [k, typeof v === 'string' ? hexToRGB(v) : (v as RGB) ?? { r: 0, g: 0, b: 0 }]
+    )
+  ) as Record<string, RGB>;
+  return { background_id: 0, map };
 }
 
-interface Metadata {
-  version: string;
-  dimensions: { width: number; height: number };
-  total_regions: number;
-  background_id: number;
-  regions: Region[];
-}
+const toHex2 = (n: number) => Math.max(0, Math.min(255, n|0)).toString(16).padStart(2, '0');
+export const rgbToHex = (c: RGB): Hex =>
+  (`#${toHex2(c.r)}${toHex2(c.g)}${toHex2(c.b)}` as Hex);
 
-interface PaletteData {
-  background_id: number;
-  map: Record<string, { r: number; g: number; b: number }>;
-}
+//accept #RGB, #RRGGBB, #RGBA, #RRGGBBAA (alpha ignored)
+export const hexToRGB = (hex: string): RGB => {
+  const s = hex.trim().replace(/^#/, '');
+  if (s.length === 3 || s.length === 4) {
+    const r = s[0] + s[0], g = s[1] + s[1], b = s[2] + s[2];
+    return { r: parseInt(r, 16), g: parseInt(g, 16), b: parseInt(b, 16) };
+  }
+  if (s.length === 6 || s.length === 8) {
+    return {
+      r: parseInt(s.slice(0, 2), 16),
+      g: parseInt(s.slice(2, 4), 16),
+      b: parseInt(s.slice(4, 6), 16),
+    };
+  }
+  //fallback for invalid strings
+  return { r: 0, g: 0, b: 0 };
+};
 
 export class CrownMuralController {
   private canvas: HTMLCanvasElement;
@@ -42,16 +84,17 @@ export class CrownMuralController {
   
   // Cached data
   private metadata: Metadata | null = null;
-  private palette: PaletteData | null = null;
+  private palette: Palette | null = null;
   private baseImage: HTMLImageElement | null = null;
   private idImageData: ImageData | null = null;
-  
+  private backgroundId: number  =   0;
   // Animation frame
   private animationId: number = 0;
   private lastTimestamp: number = 0;
   
   // Precomputed lookup table for ID decoding
-  private readonly idLookup = new Uint32Array(256 * 256 * 256);
+  // @ts-ignore
+    private readonly idLookup = new Uint32Array(256 * 256 * 256);
   
   constructor() {
     this.canvas = document.getElementById('mural-canvas') as HTMLCanvasElement;
@@ -76,13 +119,18 @@ export class CrownMuralController {
   private async init(): Promise<void> {
     try {
       // Parallel loading for faster startup
-      const [metadata, palette] = await Promise.all([
-        fetch('public/data/metadata.json').then(r => r.json()),
-        fetch('public/data/palette.json').then(r => r.json()).catch(() => null)
-      ]);
-      
-      this.metadata = metadata;
-      this.palette = palette;
+      const [metadata, rawPalette] = await Promise.all([
+      fetchJSON<Metadata>('data/metadata.json'),
+      fetchJSON<unknown>('data/palette.json', { optional: true }),
+    ]);
+      this.metadata = metadata!;
+    if (rawPalette) {
+      const normalized: Palette = normalizePaletteToRGB(rawPalette);
+      this.palette = normalized as Palette;
+      this.backgroundId = normalized.background_id;
+    } else {
+        this.palette = { background_id: 0, map: {} };
+    }
       
       // Generate project data and populate regions map
       this.generateProjectData();
@@ -152,7 +200,7 @@ export class CrownMuralController {
         resolve();
       };
       img.onerror = () => reject(new Error('Failed to load colored regions'));
-      img.src = 'public/data/coloured_regions.png';
+      img.src = url('data/coloured_regions.png');
     });
   }
   
@@ -171,7 +219,7 @@ export class CrownMuralController {
         resolve();
       };
       img.onerror = () => reject(new Error('Failed to load ID map'));
-      img.src = 'public/data/id_map.png';
+      img.src = url('data/id_map.png');
     });
   }
   
