@@ -131,26 +131,19 @@ export class CrownMuralController {
     } else {
         this.palette = { background_id: 0, map: {} };
     }
-      
-      // Generate project data and populate regions map
-      this.generateProjectData();
-      
-      // Load images in parallel
-      await Promise.all([
-        this.loadBaseImage(),
-        this.loadIDMap()
-      ]);
-      
-      // Setup optimized event handlers
-      this.setupEventHandlers();
-      
-      // Hide loading indicator
-      const loading = document.getElementById('loading');
-      if (loading) loading.style.display = 'none';
-      
-      // Start render loop
-      this.animate(0);
-      
+    // Generate project data and populate regions map
+    // Load images in parallel
+    this.generateProjectData();
+    await Promise.all([
+    this.loadBaseImage(),
+    this.loadIDMap()
+    ]);
+    // Set optimized event handler and hide loading indicator
+    this.setupEventHandlers();
+    const loading = document.getElementById('loading');
+    if (loading) loading.style.display = 'none';
+    //start render loop
+    this.animate(0);
     } catch (err) {
       console.error('Initialization failed:', err);
       const loading = document.getElementById('loading');
