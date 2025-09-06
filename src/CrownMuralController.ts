@@ -193,7 +193,7 @@ export class CrownMuralController {
         resolve();
       };
       img.onerror = () => reject(new Error('Failed to load colored regions'));
-      img.src = url('Mural_Crown_of_Italian_City.svg.png');
+      img.src = url('data/coloured_regions.png');
     });
   }
   
