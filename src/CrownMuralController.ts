@@ -198,11 +198,11 @@ export class CrownMuralController {
         this.baseImage = img;
         this.canvas.width = img.width;
         this.canvas.height = img.height;
-        this.ctx.drawImage(img, 0, 0);
+        this.ctx.drawImage(img, 0, 0); //The Initial act of drawing
         resolve();
       };
       img.onerror = () => reject(new Error('Failed to load colored regions'));
-      img.src = url('data/coloured_regions.png');
+      img.src = url('data/coloured_regions.png'); //base png decision
     });
   }
   
