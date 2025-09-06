@@ -95,7 +95,8 @@ export class CrownMuralController {
   // Precomputed lookup table for ID decoding
   // @ts-ignore
     private readonly idLookup = new Uint32Array(256 * 256 * 256);
-  
+
+    private displayIndexByPixelId = new Map<number, number>();
   constructor() {
     this.canvas = document.getElementById('mural-canvas') as HTMLCanvasElement;
     this.ctx = this.canvas.getContext('2d', {
@@ -135,9 +136,17 @@ export class CrownMuralController {
     // Load images in parallel
     this.generateProjectData();
     await Promise.all([
-    this.loadBaseImage(),
-    this.loadIDMap()
+        this.loadBaseImage(),
+        this.loadIDMap()
     ]);
+
+    // Build pixelID -> iii map from region.mask like "mask_003.png"
+    for (const region of this.metadata!.regions) {
+        const m = /mask_(\d+)\.png$/i.exec(region.mask);
+        if (m) {this.displayIndexByPixelId.set(region.id, parseInt(m[1], 10))}}
+
+
+
     // Set optimized event handler and hide loading indicator
     this.setupEventHandlers();
     const loading = document.getElementById('loading');
@@ -232,9 +241,10 @@ export class CrownMuralController {
     // Direct array access (much faster than getImageData per pixel)
     const idx = (y * this.idImageData.width + x) * 4;
     const data = this.idImageData.data;
-    
-    // Decode from BGR (OpenCV format) to ID
-    return (data[idx + 2] << 16) | (data[idx + 1] << 8) | data[idx];
+
+    const bgrToId   =    (data[idx + 2] << 16) | (data[idx + 1] << 8) | data[idx];
+    // Decode from BGR to ID
+    return bgrToId;
   }
   
   private setupEventHandlers(): void {
@@ -294,12 +304,28 @@ export class CrownMuralController {
   
   private onRegionChange(id: number, screenX: number, screenY: number): void {
     this.hoveredRegion = id > 0 ? id : null;
-    
+
+
+    const display = this.hoveredRegion
+        ? (this.displayIndexByPixelId.get(this.hoveredRegion) ?? this.hoveredRegion): null;
     const currentRegion = document.getElementById('current-region');
-    if (currentRegion) {
-      currentRegion.textContent = this.hoveredRegion ? `#${this.hoveredRegion}` : '-';
-    }
-    
+    if (currentRegion) {currentRegion.textContent = display != null ? String(display).padStart(3, '0') : '-'}
+
+    //if (currentRegion) {
+    //  currentRegion.textContent = this.hoveredRegion ? `#${this.hoveredRegion}` : '-';
+    //}
+      //temporary check
+      // if (this.idImageData) {
+      //   const rect = this.canvas.getBoundingClientRect();
+      //   const x = Math.floor((screenX - rect.left) * (this.canvas.width / rect.width));
+      //   const y = Math.floor((screenY - rect.top) * (this.canvas.height / rect.height));
+      //   const idx = (y * this.idImageData.width + x) * 4;
+      //   const d = this.idImageData.data;
+      //   const r = d[idx], g = d[idx+1], b = d[idx+2];
+      //   const idRGB = (r) | (g<<8) | (b<<16);
+      //   const idBGR = (b) | (g<<8) | (r<<16);
+      //   console.log({ r, g, b, idRGB, idBGR, gray: (r===g&&g===b)?r:null });
+      // }
     if (this.hoveredRegion) {
       const region = this.regions.get(this.hoveredRegion);
       if (region?.project) {
