@@ -254,10 +254,11 @@ export class CrownMuralController {
     const regionCount = document.getElementById('region-count');
     if (regionCount) regionCount.textContent = String(this.regions.size);
   }
-
+  /**
   private async loadBaseImage(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
-      const img = new Image();
+
+        const img = new Image();
 
       img.onload = () => {
           this.baseImage = img;
@@ -272,7 +273,36 @@ export class CrownMuralController {
       img.onerror = () => reject(new Error('Failed to load base image'));
       img.src = url('Mural_Crown_of_Italian_City.svg.png'); //[HELLO]base png decision
     });
+  }*/
+
+  private async loadBaseImage(): Promise<void>{
+    const src =   url(this.config.baseImagePath ?? 'Mural_Crown_of_Italian_City.svg.png');
+
+    const img =   new Image();
+    img.decoding  =   'async'
+    //if BASE_URL points to diff origin (e.g., CDN) enable CORS
+    if (!src.startsWith(location.origin)) img.crossOrigin = 'anonymous';
+
+    img.src =   src;
+    try {
+    if ('decode' in img) {
+      await img.decode();
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('load error'));
+      });
+    }
+  } catch {
+    const ok = await fetch(src, { method: 'HEAD', cache: 'no-store' })
+      .then(r => r.ok).catch(() => false);
+    throw new Error(ok? `Failed to decode base image at ${src} (format/corruption?).`
+        : `Base image not found at ${src}. Ensure it lives in /public or is imported via ?url, and that the filename + case match exactly.`)}
+
+    this.baseImage  =   img;
+    this.needsRedraw    =   true;// dont reset canvas widths since alr sized + set DPR transform in init()
   }
+
   private colorForUnifiedIndex(idx: number): RGB {
     const m = this.palette?.map;
     if (!m || idx <= 0) return this.colorFallback;
@@ -607,9 +637,9 @@ export class CrownMuralController {
 
     this.needsRedraw = false;
     // Base: if you have a base mural image, draw it here; else clear
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    //this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     // Then draw overlay compositing
-    this.ctx.drawImage(this.overlay, 0, 0);
+    //this.ctx.drawImage(this.overlay, 0, 0);
   };
   private updateTooltip(region: Region | null, x: number, y: number) {
     if (region?.project) {
