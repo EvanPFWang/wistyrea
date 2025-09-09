@@ -630,7 +630,7 @@ if __name__ == "__main__":
         description="Edge -> Region -> Colour segmentation",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("image", nargs="?", help="Path to input image", default=r"\..")
+    parser.add_argument("image", nargs="?", help="Path to input image", default=".")
     parser.add_argument("--image", dest="image_opt", help="Alternative to positional image path")
     """        out_overlay_path=args.overlay,
         out_filled_path=args.filled,
