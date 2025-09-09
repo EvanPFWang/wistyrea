@@ -64,4 +64,5 @@ export interface ControllerConfig {
   dataPath?: string;
   enableDebug?: boolean;
   maxFPS?: number;
-  unifiedMaskPath?: string}
+  unifiedMaskPath?: string;
+  maskBackgroundIndex?: number}

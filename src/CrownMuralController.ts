@@ -95,11 +95,15 @@ export class CrownMuralController {
   private paletteBackgroundIndex: number = 0;           // background_id coming from palette.json (often 0)
   private colorFallback: RGB = { r: 255, g: 255, b: 0 };//gold fallback for safety
 
-  /**
+
+    /**
   private baseImageData: ImageData | null = null;//copy of base image px to store color
   private workingImageData: ImageData | null = null;//working copy of image mutated when highlighting*/
-  private unifiedMaskWidth = 0;
-  private unifiedMaskHeight = 0;
+
+  // @ts-ignore
+    private unifiedMaskWidth = 0;
+  // @ts-ignore
+    private unifiedMaskHeight = 0;
   private unifiedMaskIndex16: Uint16Array | null = null;//region indices per pixel loaded from the unified mask
   /**private highlightColors: RGB[] = [];//highlight colors, repeating as needed
   private lastHighlight: { regionIdx: number; pixels: number[] } | null = null;//recorded last highlighted region and pixel offsets
@@ -120,6 +124,8 @@ export class CrownMuralController {
 
   // Animation frame
   private animationId: number = 0;
+  private fpsElement = document.getElementById('fps');
+  private fpsLastUpdate = 0;
   private lastTimestamp: number = 0;
 
   // Precomputed lookup table for ID decoding
@@ -127,7 +133,23 @@ export class CrownMuralController {
   //  private readonly idLookup = new Uint32Array(256 * 256 * 256);
 
     private displayIndexByPixelId = new Map<number, number>();
-  constructor(config: ControllerConfig={}) {
+
+
+    private resizeCanvasesForDPR(w: number, h: number) {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const set = (c: HTMLCanvasElement, ctx:
+                  CanvasRenderingContext2D, alpha=false) => {
+        c .width  = Math.round(w * dpr);
+        c.height = Math.round(h * dpr);
+        c.style.width  = w + 'px';
+        c.style.height = h + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)}
+      set(this.canvas,  this.ctx);
+      set(this.idCanvas, this.idCtx);
+      set(this.overlay, this.overlayCtx, true)}
+
+    constructor(config: ControllerConfig={}) {
+
     this.config = config;
     this.canvas = document.getElementById('mural-canvas') as HTMLCanvasElement;
     this.ctx = this.canvas.getContext('2d', {
@@ -159,7 +181,11 @@ export class CrownMuralController {
       fetchJSON<unknown>('data/palette.json', { optional: true }),
     ]);
       this.metadata = metadata!;
-      for (const region of this.metadata!.regions) {
+
+      const { width, height } = this.metadata!.dimensions;
+      this.resizeCanvasesForDPR(width, height);
+
+      for (const region of this.metadata!.regions) {//load images
         const m = /mask_(\d+)\.png$/i.exec(region.mask);
         if (m) {const iii = parseInt(m[1], 10);
           this.displayIndexByPixelId.set(region.id, iii);   // pixel-id → iii
@@ -237,13 +263,7 @@ export class CrownMuralController {
     const regionCount = document.getElementById('region-count');
     if (regionCount) regionCount.textContent = String(this.regions.size);
   }
-  private loadImage(src: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
-    img.src = src;
-  })}
+
   private async loadBaseImage(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const img = new Image();
@@ -259,7 +279,7 @@ export class CrownMuralController {
           this.needsRedraw = true;//draw once
           resolve()};
       img.onerror = () => reject(new Error('Failed to load base image'));
-      img.src = url('data/Mural_Crown_of_Italian_City.svg.png'); //[HELLO]base png decision
+      img.src = url('Mural_Crown_of_Italian_City.svg.png'); //[HELLO]base png decision
     });
   }
   private colorForUnifiedIndex(idx: number): RGB {
@@ -309,7 +329,7 @@ export class CrownMuralController {
       img.src = url(maskPath);
     });
   }
-  private async loadIDMap(): Promise<void> {
+  /**private async loadIDMap(): Promise<void> {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
@@ -317,18 +337,29 @@ export class CrownMuralController {
         this.idCanvas.height = img.height;
         this.idCtx.imageSmoothingEnabled = false;
         this.idCtx.drawImage(img, 0, 0);//[HELLOcv]The Initial act of drawing
-        
+
         // Pre-cache entire ID map for ultra-fast lookups
         this.idImageData = this.idCtx.getImageData(0, 0, img.width, img.height);
-        
+
         resolve();
       };
       img.onerror = () => reject(new Error('Failed to load ID map'));
       img.src = url('data/id_map.png');
     });
+  }*/
+  private async loadIDMap(): Promise<void> {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = url('data/id_map.png');
+    await img.decode();
+
+    //draw to idCanvas then cache ImageData
+    this.idCanvas.width = img.width;
+    this.idCanvas.height = img.height;
+    this.idCtx.drawImage(img, 0, 0);
+    this.idImageData = this.idCtx.getImageData(0, 0, this.idCanvas.width, this.idCanvas.height);
   }
-  
-  // Optimized ID reading using cached ImageData
+  //optimized ID reading using cached ImageData
   private readIdAt(clientX: number, clientY: number): number {
     if (!this.idImageData) return 0;
     
@@ -349,7 +380,7 @@ export class CrownMuralController {
     // Decode from BGR to ID
     return bgrToId;
   }
-  
+
   private setupEventHandlers(): void {
     // Use passive listeners for better scrolling performance
     const options = { passive: true };
@@ -404,7 +435,18 @@ export class CrownMuralController {
       }
     }
   }
+
   private maskCanvasCache = new Map<number, HTMLCanvasElement>();
+  private async loadMaskImage(unifiedIndex: number): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url(`data/shape_masks/shape_${String(unifiedIndex).padStart(3,'0')}.png`);
+    });
+  }
+  /**
   private ensureMaskCanvas(unifiedIndex: number): HTMLCanvasElement | null {
     if (!this.unifiedMaskIndex16 || unifiedIndex <= 0) return null;
     if (unifiedIndex === this.maskBackgroundIndex || unifiedIndex === this.paletteBackgroundIndex) return null;
@@ -428,8 +470,31 @@ export class CrownMuralController {
     ctx.putImageData(img, 0, 0);
 
     this.maskCanvasCache.set(unifiedIndex, c);
-    return c}
+    return c}*/
+  private async ensureMaskCanvas(unifiedIndex: number): Promise<HTMLCanvasElement | null> {
+    if (!this.unifiedMaskIndex16 || unifiedIndex <= 0) return null; // mask indices are 0-based; but region id 0 is background
+    if (unifiedIndex === this.maskBackgroundIndex || unifiedIndex === this.paletteBackgroundIndex) return null;
 
+    let c = this.maskCanvasCache.get(unifiedIndex);
+    if (c) return c;
+
+    const img = await this.loadMaskImage(unifiedIndex);
+    c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const cctx = c.getContext('2d', { alpha: true })!;
+    //draw mask as alpha: assume mask png is white-on-black turn white to opaque
+    cctx.drawImage(img, 0, 0);
+    const id = cctx.getImageData(0, 0, c.width, c.height);
+    const data = id.data;
+    //treat any nonzero as part of mask put in alpha channel
+    for (let i = 0; i < data.length; i += 4) {const v = data[i] | data[i+1] | data[i+2];
+      data[i] = data[i+1] = data[i+2] = 255;  //draw highlight color later via globalCompositeOperation
+      data[i+3] = v ? 255 : 0}              //alpha
+
+    cctx.putImageData(id, 0, 0);
+    this.maskCanvasCache.set(unifiedIndex, c);
+    return c}
   private lastRequestedHighlight = 0;
   private async compositeHighlight(unifiedIndex: number): Promise<void> {
     const requestId = ++this.lastRequestedHighlight;
@@ -443,7 +508,7 @@ export class CrownMuralController {
     }
 
     //build / fetch alpha-mask canvas for index
-    const maskCanvas = this.ensureMaskCanvas(unifiedIndex);
+    const maskCanvas = await this.ensureMaskCanvas(unifiedIndex);
     if (!maskCanvas) {
       this.overlayDirty = null;
       this.needsRedraw = true;
@@ -458,7 +523,8 @@ export class CrownMuralController {
 
     //intersect w/ mask alpha
     oc.globalCompositeOperation = 'destination-in';
-    oc.drawImage(maskCanvas, 0, 0);
+    // @ts-ignore
+      oc.drawImage(maskCanvas, 0, 0);
 
     //reset to normal draw mode
     oc.globalCompositeOperation = 'source-over';
@@ -469,8 +535,28 @@ export class CrownMuralController {
       ? { x: region.bbox.x, y: region.bbox.y, width: region.bbox.width, height: region.bbox.height }
       : { x: 0, y: 0, width: this.canvas.width, height: this.canvas.height };
     this.needsRedraw = true}
+  private clearOverlay() {this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height)}
+  private async drawComposite(regionIds: number[]) {
+    if (!regionIds?.length) { this.clearOverlay(); return; }
 
-
+    //resolve -> mask indices (0-based iii)
+    const masks = [];
+    for (const id of regionIds) {
+      if (id <= 0) continue; // skip background
+      const iii = this.displayIndexByPixelId.get(id);
+      if (iii == null) continue;
+      const c = await this.ensureMaskCanvas(iii);
+      if (c) masks.push(c);
+    }
+    const ctx = this.overlayCtx;
+    this.clearOverlay();
+    ctx.globalCompositeOperation = 'source-over';
+    // Optional: tint color per region via palette.json
+    for (let i = 0; i < masks.length; i++) {ctx.globalAlpha = 0.25; //soft composite
+      ctx.drawImage(masks[i], 0, 0)}
+    ctx.globalAlpha = 1;
+  }
+  /**
   private onRegionChange(id: number, screenX: number, screenY: number): void {
     this.hoveredRegion = id > 0 ? id : null;
     let unifiedIndex = 0;
@@ -514,8 +600,26 @@ export class CrownMuralController {
     }
     
     this.needsRedraw = true;
-  }
-  
+  }*/
+  private async onRegionChange(id: number, clientX: number, clientY: number) {
+    this.hoveredRegion= id > 0 ? id : null;
+    this.updateTooltip(this.hoveredRegion ? this.regions.get(this.hoveredRegion) ?? null : null, clientX, clientY);
+    //choose composite set: hovered + close neighbors
+    // by centroid distance
+    const composite: number[] = [];
+    if (id > 0) {
+      composite.push(id);
+      const base = this.regions.get(id);
+      if (base) {
+        const {x: cx, y: cy} = base.centroid as any;
+        // naive neighbor search; replace with spatial grid if needed
+        for (const [otherId, r] of this.regions) {if (otherId === id) continue;
+          const dx = (r.centroid as any).x - cx;
+          const dy = (r.centroid as any).y - cy;
+          if ((dx * dx + dy * dy) <= (40 * 40)) composite.push(otherId);
+          }}}//keep small  ```if (composite.length >= 6) break```
+  await this.drawComposite(composite);
+  this.needsRedraw = true}
   private clearHover(): void {
     if (this.hoveredRegion !== null) {
       this.hoveredRegion = null;
@@ -527,11 +631,11 @@ export class CrownMuralController {
       this.needsRedraw = true;
     }
   }
-  
-  private render(): void {
+  /**
+    private render(): void {
     /**if (this.baseImage) {//after loading baseImage, each render draws image baseImage
       this.ctx.drawImage(this.baseImage, 0, 0);//[HELLOcv]The Initial act of drawing
-    }*/
+    }
     if (this.baseImage) this.ctx.drawImage(this.baseImage, 0, 0);
     //mask comp  highlighjt overlay
     if (this.overlay) {
@@ -579,7 +683,10 @@ export class CrownMuralController {
       }
     }
   }
+  */
 
+
+  /**
   private animate(timestamp: number): void {
     // Calculate FPS
     if (this.lastTimestamp) {
@@ -597,8 +704,83 @@ export class CrownMuralController {
     }
     
     this.animationId = requestAnimationFrame((t) => this.animate(t));
+  }*/
+  private animate = (ts: number) => {
+    this.animationId = requestAnimationFrame(this.animate);
+
+    if (this.fpsElement && ts - this.fpsLastUpdate > 250) {
+      if (this.lastTimestamp) {
+        const delta = ts - this.lastTimestamp;           //ts RAF timestamp
+        const fps = Math.max(1, Math.round(1000 / delta));
+        this.fpsElement.textContent = String(fps);            //batch single write
+      }this.fpsLastUpdate = ts}
+    this.lastTimestamp = ts;
+
+    if (!this.needsRedraw) return;
+    this.needsRedraw = false;
+
+    if (this.baseImage) {
+      this.ctx.drawImage(this.baseImage, 0, 0);
+    } else {this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height)}
+
+
+    //overlay (precomposited on own canvas) w/ opt dirty rect clip
+    if (this.overlayDirty) {
+      const { x, y, width, height } = this.overlayDirty;
+      this.ctx.save();
+      this.ctx.beginPath();
+      this.ctx.rect(x, y, width, height);
+      this.ctx.clip();
+      this.ctx.drawImage(this.overlay, 0, 0);
+      this.ctx.restore();
+      } else {this.ctx.drawImage(this.overlay, 0, 0)}
+    //HUD (bbox + centroid label) for hovered region.
+    if(this.hoveredRegion !== null) {
+      const region = this.regions.get(this.hoveredRegion);
+      if(region) {
+          this.ctx.save();
+
+          const {x, y, width, height} = region.bbox;
+          this.ctx.shadowColor = 'gold';
+          this.ctx.shadowBlur = 20;
+          this.ctx.strokeStyle = 'rgba(255, 215, 0, 0.8)';
+          this.ctx.lineWidth = 2;
+          this.ctx.strokeRect(x, y, width, height);
+
+          const {x: cx, y: cy} = region.centroid;
+          this.ctx.shadowBlur = 5;
+          this.ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+          this.ctx.fillRect(cx - 25, cy - 10, 50, 20);
+
+          this.ctx.shadowBlur = 0;
+          this.ctx.fillStyle = 'gold';
+          this.ctx.font = 'bold 11px sans-serif';
+          this.ctx.textAlign = 'center';
+          this.ctx.textBaseline = 'middle';
+          this.ctx.fillText(`#${this.hoveredRegion}`, cx, cy);
+
+          this.ctx.restore()}
+    }
+
+
+    this.needsRedraw = false;
+    // Base: if you have a base mural image, draw it here; else clear
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    // Then draw overlay compositing
+    this.ctx.drawImage(this.overlay, 0, 0);
+  };
+  private updateTooltip(region: Region | null, x: number, y: number) {
+    if (region?.project) {
+      this.tooltipTitle.textContent = region.project.title;
+      this.tooltipBlurb.textContent = region.project.blurb;
+      this.tooltip.style.display = 'block';
+      //left/top fine and transform translate() can reduce layout work if you animate it
+      this.tooltip.style.left = `${x}px`;
+      this.tooltip.style.top  = `${y}px`;
+    } else {
+      this.tooltip.style.display = 'none';
+    }
   }
-  
   public destroy(): void {
     if (this.animationId) {
       cancelAnimationFrame(this.animationId);
