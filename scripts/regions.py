@@ -657,6 +657,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     img_path = args.image_opt or args.image or _find_default_image()
+
+    img_path = args.image_opt or args.image
+    if img_path:
+        p = Path(img_path)
+        if not p.is_absolute():
+            p = _repo_root_from_this_file() / p  # scripts/.. = repo root
+        img_path = str(p) if p.exists() else None
     if not img_path or not Path(img_path).exists():
         parser.print_help(sys.stderr)
         print("\nERROR: No input image supplied and none found in the current directory. "
