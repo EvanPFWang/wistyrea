@@ -1,5 +1,5 @@
 // src/CrownMuralController.ts
-import {RGB, Hex, Palette, Metadata,Region, ProjectType} from "./types.ts";
+import {RGB, Hex, Palette, Metadata,Region, ProjectType, ControllerConfig} from "./types.ts";
 
 const BASE = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '/');
 const url = (p: string) => `${BASE}${p.replace(/^\/+/, '')}`;
@@ -74,7 +74,7 @@ export class CrownMuralController {
   private tooltip: HTMLDivElement;
   private tooltipTitle: HTMLElement;
   private tooltipBlurb: HTMLElement;
-  
+  private config;
   // Performance optimizations
   private regions: Map<number, Region> = new Map();
   private hoveredRegion: number | null = null;
@@ -87,36 +87,70 @@ export class CrownMuralController {
   private palette: Palette | null = null;
   private baseImage: HTMLImageElement | null = null;
   private idImageData: ImageData | null = null;
-  private backgroundId: number  =   0;
+
+
+  private backgroundId: number = 0;
+
+  private maskBackgroundIndex: number = 0;              // unified_mask background index (your regions.py uses 0)
+  private paletteBackgroundIndex: number = 0;           // background_id coming from palette.json (often 0)
+  private colorFallback: RGB = { r: 255, g: 255, b: 0 };//gold fallback for safety
+
+  /**
+  private baseImageData: ImageData | null = null;//copy of base image px to store color
+  private workingImageData: ImageData | null = null;//working copy of image mutated when highlighting*/
+  private unifiedMaskWidth = 0;
+  private unifiedMaskHeight = 0;
+  private unifiedMaskIndex16: Uint16Array | null = null;//region indices per pixel loaded from the unified mask
+  /**private highlightColors: RGB[] = [];//highlight colors, repeating as needed
+  private lastHighlight: { regionIdx: number; pixels: number[] } | null = null;//recorded last highlighted region and pixel offsets
+  private currentRegionIndex: number = 0;//curr 1‑based region idx being highlighted
+  private readonly config: ControllerConfig;//config passed in via constructor
+   */
+  private overlay: HTMLCanvasElement;
+  private overlayCtx: CanvasRenderingContext2D;
+  private overlayDirty: { x: number; y: number; width: number; height: number } | null = null;// unifiedIndex -> mask <img>
+
+
+
+
+
+
+  //private maskCache = new Map<number, HTMLImageElement>();// unifiedIndex -> mask <img>
+  private regionByShapeIndex = new Map<number, Region>();  // iii (0-based) -> Region
+
   // Animation frame
   private animationId: number = 0;
   private lastTimestamp: number = 0;
-  
+
   // Precomputed lookup table for ID decoding
   // @ts-ignore
-    private readonly idLookup = new Uint32Array(256 * 256 * 256);
+  //  private readonly idLookup = new Uint32Array(256 * 256 * 256);
 
     private displayIndexByPixelId = new Map<number, number>();
-  constructor() {
+  constructor(config: ControllerConfig={}) {
+    this.config = config;
     this.canvas = document.getElementById('mural-canvas') as HTMLCanvasElement;
     this.ctx = this.canvas.getContext('2d', {
       alpha: false,
       desynchronized: true // Hint for better performance
     })!;
-    
+
+    this.overlay = document.createElement('canvas');
+    this.overlayCtx = this.overlay.getContext('2d', { alpha: true })!;
+
     this.idCanvas = document.getElementById('id-canvas') as HTMLCanvasElement;
     this.idCtx = this.idCanvas.getContext('2d', {
       willReadFrequently: true,
       alpha: false
     })!;
-    
+
     this.tooltip = document.getElementById('tooltip') as HTMLDivElement;
     this.tooltipTitle = this.tooltip.querySelector('strong')!;
     this.tooltipBlurb = this.tooltip.querySelector('.blurb')!;
-    
+
     this.init();
   }
-  
+
   private async init(): Promise<void> {
     try {
       // Parallel loading for faster startup
@@ -125,25 +159,38 @@ export class CrownMuralController {
       fetchJSON<unknown>('data/palette.json', { optional: true }),
     ]);
       this.metadata = metadata!;
+      for (const region of this.metadata!.regions) {
+        const m = /mask_(\d+)\.png$/i.exec(region.mask);
+        if (m) {const iii = parseInt(m[1], 10);
+          this.displayIndexByPixelId.set(region.id, iii);   // pixel-id → iii
+        this.regionByShapeIndex.set(iii, region)}         // iii → Region
+}
     if (rawPalette) {
-      const normalized: Palette = normalizePaletteToRGB(rawPalette);
+      const normalized = normalizePaletteToRGB(rawPalette);
       this.palette = normalized as Palette;
-      this.backgroundId = normalized.background_id;
-    } else {
-        this.palette = { background_id: 0, map: {} };
-    }
+      this.backgroundId = normalized.background_id | 0;
+      this.paletteBackgroundIndex = this.backgroundId;} else {this.palette = { background_id: 0, map: {} };
+      this.backgroundId = 0;
+      this.paletteBackgroundIndex = 0;}
+
+
+    this.maskBackgroundIndex = this.config.maskBackgroundIndex ?? 0;
     // Generate project data and populate regions map
     // Load images in parallel
     this.generateProjectData();
     await Promise.all([
         this.loadBaseImage(),
-        this.loadIDMap()
+        this.loadIDMap(),
+        this.loadUnifiedMask()
     ]);
 
     // Build pixelID -> iii map from region.mask like "mask_003.png"
     for (const region of this.metadata!.regions) {
         const m = /mask_(\d+)\.png$/i.exec(region.mask);
-        if (m) {this.displayIndexByPixelId.set(region.id, parseInt(m[1], 10))}}
+        if (m) {this.displayIndexByPixelId.set(region.id, parseInt(m[1], 10))}
+        const mm = /mask_(\d+)\.png$/i.exec(region.mask);
+        if (mm) this.regionByShapeIndex.set(parseInt(mm[1], 10), region)}
+
 
 
 
@@ -162,50 +209,106 @@ export class CrownMuralController {
       }
     }
   }
-  
+
   private generateProjectData(): void {
     if (!this.metadata) return;
-    
+
     const projectTypes: ProjectType[] = [
       { prefix: 'tower-', titles: ['Defence System', 'Watch Tower', 'Guard Post'] },
       { prefix: 'arch-', titles: ['Gateway', 'Portal', 'Entrance'] },
       { prefix: 'brick-', titles: ['Wall Section', 'Foundation', 'Battlement'] },
       { prefix: 'window-', titles: ['Lookout', 'Arrow Slit', 'Opening'] }
     ];
-    
+
     for (const region of this.metadata.regions) {
       const type = projectTypes[region.id % projectTypes.length];
       const titleIdx = Math.floor(region.id / projectTypes.length) % type.titles.length;
-      
+
       region.project = {
         title: `${type.titles[titleIdx]} #${region.id}`,
         href: `/projects/${type.prefix}${region.id}`,
         blurb: `Crown element ${region.id}: ${type.titles[titleIdx].toLowerCase()}`
       };
-      
+
       // Store in map for O(1) lookup
       this.regions.set(region.id, region);
     }
-    
+
     const regionCount = document.getElementById('region-count');
     if (regionCount) regionCount.textContent = String(this.regions.size);
   }
-  
+  private loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+    img.src = src;
+  })}
   private async loadBaseImage(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const img = new Image();
+
       img.onload = () => {
-        this.baseImage = img;
-        this.canvas.width = img.width;
-        this.canvas.height = img.height;
-        this.ctx.drawImage(img, 0, 0); //The Initial act of drawing
-        resolve();
-      };
-      img.onerror = () => reject(new Error('Failed to load colored regions'));
-      img.src = url('data/coloured_regions.png'); //base png decision
+          this.baseImage = img;
+          this.canvas.width = img.width;
+          this.canvas.height = img.height;
+          this.overlay.width = img.width;
+          this.overlay.height = img.height;
+
+          this.ctx.drawImage(img, 0, 0);
+          this.needsRedraw = true;//draw once
+          resolve()};
+      img.onerror = () => reject(new Error('Failed to load base image'));
+      img.src = url('data/Mural_Crown_of_Italian_City.svg.png'); //[HELLO]base png decision
     });
   }
-  
+  private colorForUnifiedIndex(idx: number): RGB {
+    const m = this.palette?.map;
+    if (!m || idx <= 0) return this.colorFallback;
+
+    //palette.map keys are typically strings: "1", "2", ...
+    const kStr = String(idx) as keyof typeof m;
+    const kNum = idx as unknown as keyof typeof m; // belt-and-suspenders
+    const c: any = (m as any)[kStr] ?? (m as any)[kNum];
+
+    if (c && typeof c.r === 'number' && typeof c.g === 'number' && typeof c.b === 'number') {
+      // clamp + coerce to int
+      return { r: c.r | 0, g: c.g | 0, b: c.b | 0 };
+    }
+    return this.colorFallback}
+  private async loadUnifiedMask(): Promise<void> {
+    const maskPath = this.config.unifiedMaskPath || 'data/shape_masks/unified_mask.png';
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const off = document.createElement('canvas');
+        off.width = img.width;
+        off.height = img.height;
+        const ctx = off.getContext('2d', { willReadFrequently: true, alpha: false });
+        // @ts-ignore
+          ctx.drawImage(img, 0, 0);
+
+          let id: any;
+          // @ts-ignore
+          id = ctx.getImageData(0, 0, img.width, img.height);
+        const src   =   id.data;
+        const W = id.width, H = id.height;
+        this.unifiedMaskWidth = W;
+        this.unifiedMaskHeight = H;
+
+
+        const out = new Uint16Array(W * H);
+        for (let i = 0, p = 0; i < out.length; i++, p += 4) {out[i] = (src[p] | (src[p + 1] << 8)) & 0xffff}
+        this.unifiedMaskIndex16 = out;
+        resolve();
+      };
+      img.onerror = () => {
+        console.warn('Unified mask not found at', maskPath);
+        resolve();
+      };
+      img.src = url(maskPath);
+    });
+  }
   private async loadIDMap(): Promise<void> {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -213,7 +316,7 @@ export class CrownMuralController {
         this.idCanvas.width = img.width;
         this.idCanvas.height = img.height;
         this.idCtx.imageSmoothingEnabled = false;
-        this.idCtx.drawImage(img, 0, 0);
+        this.idCtx.drawImage(img, 0, 0);//[HELLOcv]The Initial act of drawing
         
         // Pre-cache entire ID map for ultra-fast lookups
         this.idImageData = this.idCtx.getImageData(0, 0, img.width, img.height);
@@ -301,10 +404,81 @@ export class CrownMuralController {
       }
     }
   }
-  
+  private maskCanvasCache = new Map<number, HTMLCanvasElement>();
+  private ensureMaskCanvas(unifiedIndex: number): HTMLCanvasElement | null {
+    if (!this.unifiedMaskIndex16 || unifiedIndex <= 0) return null;
+    if (unifiedIndex === this.maskBackgroundIndex || unifiedIndex === this.paletteBackgroundIndex) return null;
+
+    let c = this.maskCanvasCache.get(unifiedIndex);
+    if (c) return c;
+
+    const W = this.unifiedMaskWidth, H = this.unifiedMaskHeight;
+    c = document.createElement('canvas');
+    c.width = W;
+    c.height = H;
+
+    const ctx = c.getContext('2d', { alpha: true })!;
+    const img = ctx.createImageData(W, H);
+    const dst = img.data; // RGBA
+
+    const src = this.unifiedMaskIndex16!;// Build binary alpha: 255 where index matches
+    for (let i = 0, p = 0; i < src.length; i++, p += 4) {
+      const a = (src[i] === unifiedIndex) ? 255 : 0;// color doesn't matter; only alpha does
+      dst[p] = 0; dst[p + 1] = 0; dst[p + 2] = 0; dst[p + 3] = a}
+    ctx.putImageData(img, 0, 0);
+
+    this.maskCanvasCache.set(unifiedIndex, c);
+    return c}
+
+  private lastRequestedHighlight = 0;
+  private async compositeHighlight(unifiedIndex: number): Promise<void> {
+    const requestId = ++this.lastRequestedHighlight;
+    const oc = this.overlayCtx;
+    oc.clearRect(0, 0, this.overlay.width, this.overlay.height);
+    if (unifiedIndex <= 0 || unifiedIndex === this.maskBackgroundIndex ||
+    unifiedIndex === this.paletteBackgroundIndex) {
+      this.overlayDirty = null;
+      this.needsRedraw = true;
+      return;
+    }
+
+    //build / fetch alpha-mask canvas for index
+    const maskCanvas = this.ensureMaskCanvas(unifiedIndex);
+    if (!maskCanvas) {
+      this.overlayDirty = null;
+      this.needsRedraw = true;
+      return;
+    }
+    if (requestId !== this.lastRequestedHighlight) return;
+    const color = this.colorForUnifiedIndex(unifiedIndex);
+
+    oc.globalCompositeOperation = 'source-over';//paind solid color overlay
+    oc.fillStyle = `rgb(${color.r}, ${color.g}, ${color.b})`;
+    oc.fillRect(0, 0, this.overlay.width, this.overlay.height);
+
+    //intersect w/ mask alpha
+    oc.globalCompositeOperation = 'destination-in';
+    oc.drawImage(maskCanvas, 0, 0);
+
+    //reset to normal draw mode
+    oc.globalCompositeOperation = 'source-over';
+
+    //dirty-rect from metadata (optional micro-optimization)
+    const region = this.regionByShapeIndex.get(unifiedIndex - 1);
+    this.overlayDirty = region
+      ? { x: region.bbox.x, y: region.bbox.y, width: region.bbox.width, height: region.bbox.height }
+      : { x: 0, y: 0, width: this.canvas.width, height: this.canvas.height };
+    this.needsRedraw = true}
+
+
   private onRegionChange(id: number, screenX: number, screenY: number): void {
     this.hoveredRegion = id > 0 ? id : null;
-
+    let unifiedIndex = 0;
+    if (this.hoveredRegion) {
+      const shapeIndex = this.displayIndexByPixelId.get(this.hoveredRegion);
+      if (shapeIndex !== undefined) unifiedIndex = shapeIndex + 1;
+    }
+    this.compositeHighlight(unifiedIndex);
 
     const display = this.hoveredRegion
         ? (this.displayIndexByPixelId.get(this.hoveredRegion) ?? this.hoveredRegion): null;
@@ -349,16 +523,35 @@ export class CrownMuralController {
       this.tooltip.style.display = 'none';
       const currentRegion = document.getElementById('current-region');
       if (currentRegion) currentRegion.textContent = '-';
+      this.compositeHighlight(0);
       this.needsRedraw = true;
     }
   }
   
   private render(): void {
-    if (this.baseImage) {
-      this.ctx.drawImage(this.baseImage, 0, 0);
-    }
+    /**if (this.baseImage) {//after loading baseImage, each render draws image baseImage
+      this.ctx.drawImage(this.baseImage, 0, 0);//[HELLOcv]The Initial act of drawing
+    }*/
+    if (this.baseImage) this.ctx.drawImage(this.baseImage, 0, 0);
+    //mask comp  highlighjt overlay
+    if (this.overlay) {
+        if (this.overlayDirty) {//optional alternative without clip
+            // this.ctx.drawImage(this.overlay, x, y, width, height,x, y, width, height);
+            const { x, y, width, height } = this.overlayDirty;//optional micro-optimization: clip to dirty bbox only
+            this.ctx.save();
+            this.ctx.beginPath();
+            this.ctx.rect(x, y, width, height);
+            this.ctx.clip();
+            this.ctx.drawImage(this.overlay, 0, 0);
+            this.ctx.restore();
+        } else {
+      this.ctx.drawImage(this.overlay, 0, 0)}}
+
+
+
+
     
-    if (this.hoveredRegion !== null) {
+    if (this.hoveredRegion !== null) {//box&label overlays
       const region = this.regions.get(this.hoveredRegion);
       if (region) {
         this.ctx.save();
@@ -386,7 +579,7 @@ export class CrownMuralController {
       }
     }
   }
-  
+
   private animate(timestamp: number): void {
     // Calculate FPS
     if (this.lastTimestamp) {

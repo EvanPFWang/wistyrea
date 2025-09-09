@@ -240,13 +240,21 @@ def export_shape_masks(
         return (M["m01"]/(M["m00"]+1e-9), M["m10"]/(M["m00"]+1e-9))
 
     idxs.sort(key=centroid)
+    dtype = np.uint16 if len(idxs) >= 256 else np.uint8
+    unified = np.zeros((h, w), dtype=dtype)
 
     for j, i in enumerate(idxs, start=1):
         m = np.zeros((h, w), np.uint8)
-        draw(m, i)
+        draw(m, i)  # draw the j‑th contour into m
+        unified[m > 0] = j  # paint region ID into the unified mask
+
+        # save individual mask
         p = out_dir / f"shape_{(j-1):03d}.png"
         cv.imwrite(str(p), m)
         saved.append(p)
+
+    # after loop finishes, save unified mask in the same directory
+    cv.imwrite(str(out_dir / "unified_mask.png"), unified)
     return saved
 
 def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
@@ -407,6 +415,7 @@ def export_palette_json(
     back to RGB for the JSON file.
     """
     #Map id -> color (in RGB)
+    #[POST - HELLO CHECK to see if indexes
     mapping = {
         int(i + 1): {"r": int(r), "g": int(g), "b": int(b)}
         for i, (b, g, r) in enumerate(palette_bgr)
