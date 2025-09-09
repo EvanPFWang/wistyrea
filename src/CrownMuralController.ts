@@ -171,64 +171,57 @@ export class CrownMuralController {
 
   private async init(): Promise<void> {
     try {
-      // Parallel loading for faster startup
+        // Parallel loading for faster startup
       const [metadata, rawPalette] = await Promise.all([
-      fetchJSON<Metadata>('data/metadata.json'),
-      fetchJSON<unknown>('data/palette.json', { optional: true }),
-    ]);
+        fetchJSON<Metadata>('data/metadata.json'),
+        fetchJSON<unknown>('data/palette.json', {optional: true}),
+      ]);
       if (!metadata) throw new Error('metadata.json missing or invalid JSON');
       this.metadata = metadata!;
 
-      const { width, height } = this.metadata!.dimensions;
+      const {width, height} = this.metadata!.dimensions;
       this.resizeCanvasesForDPR(width, height);
 
       for (const region of metadata.regions) {//load images
-        const  m = /(shape|mask)_(\d+)\.png$/i.exec(region.mask);//old mask_(\d+)\
+        const m = /(shape|mask)_(\d+)\.png$/i.exec(region.mask);//old mask_(\d+)\
         if (m) {const iii = parseInt(m[2], 10);
-          this.displayIndexByPixelId.set(region.id, iii);   // pixel-id → unifiedIndex
-        this.regionByShapeIndex.set(iii, region)}         // unifiedIndex → Region
-}
-    if (rawPalette) {
-      const normalized = normalizePaletteToRGB(rawPalette);
-      this.palette = normalized as Palette;
-      this.backgroundId = normalized.background_id | 0;
-      this.paletteBackgroundIndex = this.backgroundId;}
-    else {this.palette = { background_id: 0, map: {} };
-      this.backgroundId = 0;
-      this.paletteBackgroundIndex = 0;}
+          this.displayIndexByPixelId.set(region.id, iii);   //pixel-id → unifiedIndex
+          this.regionByShapeIndex.set(iii, region)}         //unifiedIndex → Region
+        }
+      if (rawPalette) {
+        const normalized = normalizePaletteToRGB(rawPalette);
+        this.palette = normalized as Palette;
+        this.backgroundId = normalized.background_id | 0;
+        this.paletteBackgroundIndex = this.backgroundId;
+      } else {
+        this.palette = {background_id: 0, map: {}};
+        this.backgroundId = 0;
+        this.paletteBackgroundIndex = 0}
 
 
-    this.maskBackgroundIndex = this.config.maskBackgroundIndex ?? 0;
-    // Generate project data and populate regions map
-    // Load images in parallel
-    this.generateProjectData();
-    await Promise.all([
+      this.maskBackgroundIndex = this.config.maskBackgroundIndex ?? 0;
+      //generate project data and populate regions map
+      //load images in parallel
+      this.generateProjectData();
+      await Promise.all([
         this.loadBaseImage(),
         this.loadIDMap(),
         this.loadUnifiedMask()
-    ]);
-
-    // Build pixelID -> iii map from region.mask like "mask_003.png"
-    for (const region of this.metadata!.regions) {
-        const m = /mask_(\d+)\.png$/i.exec(region.mask);
-        if (m) {this.displayIndexByPixelId.set(region.id, parseInt(m[1], 10))}
-        const mm = /mask_(\d+)\.png$/i.exec(region.mask);
-        if (mm) this.regionByShapeIndex.set(parseInt(mm[1], 10), region)}
+      ]);
 
 
 
-//COME BACK HERE
-    // Set optimized event handler and hide loading indicator
-    this.setupEventHandlers();
-    const loading = document.getElementById('loading');
-    if (loading) loading.style.display = 'none';
-    //start render loop
-    this.animate(0);
-    } catch (err) {
-      console.error('Initialization failed:', err);
+
+        //COME BACK HERE
+        // Set optimized event handler and hide loading indicator
+      this.setupEventHandlers();
+      document.getElementById('loading')?.style.setProperty('display', 'none');
+      this.animate(0);}
+    catch (err){
+      console.error('init Failed: ', err)
       const loading = document.getElementById('loading');
       if (loading) {
-        loading.textContent = 'Failed to load mural data';
+        loading.textContent = err instanceof Error ? err.message : 'Failed to load mural data';
         loading.style.color = '#ff4444';
       }
     }
