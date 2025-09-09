@@ -176,22 +176,24 @@ export class CrownMuralController {
       fetchJSON<Metadata>('data/metadata.json'),
       fetchJSON<unknown>('data/palette.json', { optional: true }),
     ]);
+      if (!metadata) throw new Error('metadata.json missing or invalid JSON');
       this.metadata = metadata!;
 
       const { width, height } = this.metadata!.dimensions;
       this.resizeCanvasesForDPR(width, height);
 
-      for (const region of this.metadata!.regions) {//load images
-        const m = /mask_(\d+)\.png$/i.exec(region.mask);
-        if (m) {const iii = parseInt(m[1], 10);
-          this.displayIndexByPixelId.set(region.id, iii);   // pixel-id → iii
-        this.regionByShapeIndex.set(iii, region)}         // iii → Region
+      for (const region of metadata.regions) {//load images
+        const  m = /(shape|mask)_(\d+)\.png$/i.exec(region.mask);//old mask_(\d+)\
+        if (m) {const iii = parseInt(m[2], 10);
+          this.displayIndexByPixelId.set(region.id, iii);   // pixel-id → unifiedIndex
+        this.regionByShapeIndex.set(iii, region)}         // unifiedIndex → Region
 }
     if (rawPalette) {
       const normalized = normalizePaletteToRGB(rawPalette);
       this.palette = normalized as Palette;
       this.backgroundId = normalized.background_id | 0;
-      this.paletteBackgroundIndex = this.backgroundId;} else {this.palette = { background_id: 0, map: {} };
+      this.paletteBackgroundIndex = this.backgroundId;}
+    else {this.palette = { background_id: 0, map: {} };
       this.backgroundId = 0;
       this.paletteBackgroundIndex = 0;}
 
@@ -215,7 +217,7 @@ export class CrownMuralController {
 
 
 
-
+//COME BACK HERE
     // Set optimized event handler and hide loading indicator
     this.setupEventHandlers();
     const loading = document.getElementById('loading');
@@ -329,10 +331,11 @@ export class CrownMuralController {
 
 
   private async loadIDMap(): Promise<void> {
+    const src = url('data/id_map.png');
     const img = new Image();
     img.decoding = 'async';
-    img.src = url('data/id_map.png');
-    await img.decode();
+    img.src = src//safety
+    try{await img.decode()}catch{throw new Error(`Failed to load id_map at ${src}`)}
 
     //draw to idCanvas then cache ImageData
     this.idCanvas.width = img.width;
