@@ -1,7 +1,7 @@
 // src/CrownMuralController.ts
 import {RGB, Hex, Palette, Metadata,Region, ProjectType, ControllerConfig} from "./types.ts";
 //import {l} from "vite/dist/node/types.d-aGj9QkWt";
-import basePngUrl from '/Mural_Crown_of_Italian_City.svg.png?url';
+//import basePngUrl from '/Mural_Crown_of_Italian_City.svg.png?url';
 const RAW_BASE = import.meta.env.BASE_URL ?? '/';
 const BASE     = RAW_BASE.endsWith('/') ? RAW_BASE : RAW_BASE + '/';
 const ABS_BASE = new URL(BASE, document.baseURI); //e.g. https://site.tld/subapp/
@@ -27,7 +27,7 @@ async function fetchJSON<T>(path: string, { optional = false } = {}): Promise<T 
   }
   return (await res.json()) as T;
 }
-const HEX_RE = /^#?(?<r>[0-9a-fA-F]{2})(?<g>[0-9a-fA-F]{2})(?<b>[0-9a-fA-F]{2})$/;
+//const HEX_RE = /^#?(?<r>[0-9a-fA-F]{2})(?<g>[0-9a-fA-F]{2})(?<b>[0-9a-fA-F]{2})$/;
 //kept sync for less overhead/await backup
 function normalizePaletteToRGB(raw: unknown): Palette {
   const any = raw as any;
@@ -429,6 +429,24 @@ export class CrownMuralController {
     this.idCanvas.height = img.height;
     this.idCtx.drawImage(img, 0, 0);
     this.idImageData = this.idCtx.getImageData(0, 0, this.idCanvas.width, this.idCanvas.height);
+
+    if (this.idImageData && this.metadata?.regions?.length) {
+      const r0    =   this.metadata.regions[0];
+      const testIdRGB = (() => {
+        const x = Math.floor(r0.centroid.x), y = Math.floor(r0.centroid.y);
+        const idx = (y * this.idImageData.width + x) * 4, d = this.idImageData.data;
+        return (d[idx] | (d[idx+1] << 8) | (d[idx+2] << 16))})();
+      const testIdBGR = (() => {
+        const x = Math.floor(r0.centroid.x), y = Math.floor(r0.centroid.y);
+        const idx = (y * this.idImageData.width + x) * 4, d = this.idImageData.data;
+        return (d[idx]+2 <<16 | (d[idx+1] << 8) | (d[idx]));
+      })();
+      const hasRGB = this.regions.has(testIdRGB);
+      const hasBGR = this.regions.has(testIdBGR);
+      if (hasBGR && !hasRGB) this._decodeOrder = 'bgr';
+    }
+
+
   }
   //optimized ID reading using cached ImageData
   private readIdAt(clientX: number, clientY: number): number {
@@ -439,18 +457,15 @@ export class CrownMuralController {
     const y = Math.floor((clientY - rect.top) * (this.canvas.height / rect.height));
     
     // Bounds check
-    if (x < 0 || x >= this.canvas.width || y < 0 || y >= this.canvas.height) {
-      return 0;
-    }
+    if (x < 0 || x >= this.canvas.width || y < 0 || y >= this.canvas.height) {return 0}
     
     // Direct array access (much faster than getImageData per pixel)
     const idx = (y * this.idImageData.width + x) * 4;
     const data = this.idImageData.data;
 
-    const bgrToId   =    (data[idx + 2] << 16) | (data[idx + 1] << 8) | data[idx];
-    // Decode from BGR to ID
-    return bgrToId;
-  }
+    if (this._decodeOrder === 'bgr') {return (data[idx + 2] << 16) | (data[idx + 1] << 8) | data[idx]}
+    return (data[idx] | (data[idx + 1] << 8) | (data[idx + 2] << 16))}
+  private _decodeOrder: 'rgb' | 'bgr' = 'rgb';
 
   private setupEventHandlers(): void {
     // Use passive listeners for better scrolling performance
@@ -628,8 +643,8 @@ export class CrownMuralController {
           const dy = (r.centroid as any).y - cy;
           if ((dx * dx + dy * dy) <= (40 * 40)) composite.push(otherId);
           }}}//keep small  ```if (composite.length >= 6) break```
-  await this.drawComposite(composite);
-  this.needsRedraw = true}
+    await this.drawComposite(composite);
+    this.needsRedraw = true}
   private clearHover(): void {
     if (this.hoveredRegion !== null) {
       this.hoveredRegion = null;

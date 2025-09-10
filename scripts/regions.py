@@ -255,6 +255,9 @@ def export_shape_masks(
 
     # after loop finishes, save unified mask in the same directory
     cv.imwrite(str(out_dir / "unified_mask.png"), unified)
+    u16_le = unified.astype("<u2", copy=False)  # guaranteed endian 16-bit for web
+    with open(out_dir / "unified_mask.u16", "wb") as f:
+        f.write(u16_le.tobytes())
     return saved
 
 def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
