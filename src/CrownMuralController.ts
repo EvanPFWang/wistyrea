@@ -1,9 +1,22 @@
 // src/CrownMuralController.ts
 import {RGB, Hex, Palette, Metadata,Region, ProjectType, ControllerConfig} from "./types.ts";
 
-const BASE = (import.meta.env.BASE_URL || '/').replace(/\/+$/, '/');
-const url = (p: string) => `${BASE}${p.replace(/^\/+/, '')}`;
-// helper with good errors + optional null
+const RAW_BASE = import.meta.env.BASE_URL ?? '/';
+const BASE     = RAW_BASE.endsWith('/') ? RAW_BASE : RAW_BASE + '/';
+const ABS_BASE = new URL(BASE, document.baseURI); //e.g. https://site.tld/subapp/
+
+
+const ABSOLUTE_RE = /^[a-zA-Z][\w+.-]*:|^\/\//;
+export const absUrl = (p: string) => {
+  if (ABSOLUTE_RE.test(p)) return p;//already abs/proto-relative
+  const clean = p.replace(/^\/+/, '');//drop leading slashes
+  return new URL(clean, ABS_BASE).href}// fully qualified URL
+export const pathUrl = (p: string) => {
+  const u = new URL(absUrl(p));
+  return u.pathname + u.search + u.hash}//originless path
+
+export const url    =   absUrl
+
 
 async function fetchJSON<T>(path: string, { optional = false } = {}): Promise<T | null> {
   const res = await fetch(url(path), { cache: 'no-cache' }); // or 'force-cache' for CDN caching
@@ -273,15 +286,19 @@ export class CrownMuralController {
       img.onerror = () => reject(new Error('Failed to load base image'));
       img.src = url('Mural_Crown_of_Italian_City.svg.png'); //[HELLO]base png decision
     });
-  }*/
+  }
 
   private async loadBaseImage(): Promise<void>{
+        //reolve url existing in built site
+      //if file in `public/`, reference with absolute path
+      //or import basePng from './assets/base.png?url'
     const src =   url(this.config.baseImagePath ?? 'Mural_Crown_of_Italian_City.svg.png');
 
     const img =   new Image();
     img.decoding  =   'async'
     //if BASE_URL points to diff origin (e.g., CDN) enable CORS
-    if (!src.startsWith(location.origin)) img.crossOrigin = 'anonymous';
+    const sameOrigin = new URL(src, document.baseURI).origin === location.origin;
+    if (!sameOrigin) img.crossOrigin = 'anonymous';
 
     img.src =   src;
     try {
@@ -302,6 +319,44 @@ export class CrownMuralController {
     this.baseImage  =   img;
     this.needsRedraw    =   true;// dont reset canvas widths since alr sized + set DPR transform in init()
   }
+  */
+
+
+private async loadBaseImage(): Promise<void> {
+  const source = url(this.config.baseImagePath ?? 'Mural_Crown_of_Italian_city.svg.png');
+
+  const img = new Image();
+  img.decoding = 'async';
+
+  if (!source.startsWith(location.origin)) img.crossOrigin = 'anonymous';
+
+  //set src
+  img.src = source;
+
+  try {
+    if ('decode' in img) {
+      await img.decode();
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('load error'));
+      });
+    }
+  } catch {
+    //distinguish 404 vs decode failure for clearer logs
+    const ok = await fetch(source, { method: 'HEAD', cache: 'no-store' })
+      .then(r => r.ok).catch(() => false);
+    throw new Error(
+      ok
+        ? `Failed to decode base image at ${source} (format/corruption?).`
+        : `Base image not found at ${source}. Ensure it lives in /public or is imported via ?url, and that the filename + case match exactly.`
+    );
+  }
+
+  this.baseImage = img;
+  //canvas dims alr sized + set DPR transform in init().
+  this.needsRedraw = true;
+}
 
   private colorForUnifiedIndex(idx: number): RGB {
     const m = this.palette?.map;
@@ -347,18 +402,24 @@ export class CrownMuralController {
         console.warn('Unified mask not found at', maskPath);
         resolve();
       };
-      img.src = url(maskPath);
+      const source = url(maskPath);
+      const sameOrigin = new URL(source, document.baseURI).origin === location.origin;
+      if (!sameOrigin) img.crossOrigin = 'anonymous';
+      img.src = source;
     });
   }
 
 
 
   private async loadIDMap(): Promise<void> {
-    const src = url('data/id_map.png');
+    const source = url('data/id_map.png');
     const img = new Image();
     img.decoding = 'async';
-    img.src = src//safety
-    try{await img.decode()}catch{throw new Error(`Failed to load id_map at ${src}`)}
+    const sameOrigin = new URL(source, document.baseURI).origin === location.origin;
+    if (!sameOrigin) img.crossOrigin = 'anonymous';
+
+    img.src = source//safety
+    try{await img.decode()}catch{throw new Error(`Failed to load id_map at ${source}`)}
 
     //draw to idCanvas then cache ImageData
     this.idCanvas.width = img.width;
@@ -450,7 +511,10 @@ export class CrownMuralController {
       img.decoding = 'async';
       img.onload = () => resolve(img);
       img.onerror = reject;
-      img.src = url(`data/shape_masks/shape_${String(unifiedIndex).padStart(3,'0')}.png`);
+      const source    =   url(`data/shape_masks/shape_${String(unifiedIndex).padStart(3,'0')}.png`);
+      const sameOrigin = new URL(source, document.baseURI).origin === location.origin;
+      if (!sameOrigin) img.crossOrigin = 'anonymous';
+      img.src = source;
     });
   }
 
