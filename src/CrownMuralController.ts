@@ -1,7 +1,7 @@
 // src/CrownMuralController.ts
 import {RGB, Hex, Palette, Metadata,Region, ProjectType, ControllerConfig} from "./types.ts";
-import {l} from "vite/dist/node/types.d-aGj9QkWt";
-
+//import {l} from "vite/dist/node/types.d-aGj9QkWt";
+import basePngUrl from '/Mural_Crown_of_Italian_City.svg.png?url';
 const RAW_BASE = import.meta.env.BASE_URL ?? '/';
 const BASE     = RAW_BASE.endsWith('/') ? RAW_BASE : RAW_BASE + '/';
 const ABS_BASE = new URL(BASE, document.baseURI); //e.g. https://site.tld/subapp/
@@ -324,7 +324,7 @@ export class CrownMuralController {
 
 
   private async loadBaseImage(): Promise<void> {
-    const rawSource = url(this.config.baseImagePath ?? 'Mural_Crown_of_Italian_city.svg.png');
+    const rawSource = url(this.config.baseImagePath ?? 'Mural_Crown_of_Italian_City.svg.png');
 
     const img = new Image();
     img.decoding = 'async';
