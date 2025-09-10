@@ -268,59 +268,6 @@ export class CrownMuralController {
     const regionCount = document.getElementById('region-count');
     if (regionCount) regionCount.textContent = String(this.regions.size);
   }
-  /**
-  private async loadBaseImage(): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-
-        const img = new Image();
-
-      img.onload = () => {
-          this.baseImage = img;
-          this.canvas.width = img.width;
-          this.canvas.height = img.height;
-          this.overlay.width = img.width;
-          this.overlay.height = img.height;
-
-          this.ctx.drawImage(img, 0, 0);
-          this.needsRedraw = true;//draw once
-          resolve()};
-      img.onerror = () => reject(new Error('Failed to load base image'));
-      img.src = url('Mural_Crown_of_Italian_City.svg.png'); //[HELLO]base png decision
-    });
-  }
-
-  private async loadBaseImage(): Promise<void>{
-        //reolve url existing in built site
-      //if file in `public/`, reference with absolute path
-      //or import basePng from './assets/base.png?url'
-    const src =   url(this.config.baseImagePath ?? 'Mural_Crown_of_Italian_City.svg.png');
-
-    const img =   new Image();
-    img.decoding  =   'async'
-    //if BASE_URL points to diff origin (e.g., CDN) enable CORS
-    const sameOrigin = new URL(src, document.baseURI).origin === location.origin;
-    if (!sameOrigin) img.crossOrigin = 'anonymous';
-
-    img.src =   src;
-    try {
-    if ('decode' in img) {
-      await img.decode();
-    } else {
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('load error'));
-      });
-    }
-  } catch {
-    const ok = await fetch(src, { method: 'HEAD', cache: 'no-store' })
-      .then(r => r.ok).catch(() => false);
-    throw new Error(ok? `Failed to decode base image at ${src} (format/corruption?).`
-        : `Base image not found at ${src}. Ensure it lives in /public or is imported via ?url, and that the filename + case match exactly.`)}
-
-    this.baseImage  =   img;
-    this.needsRedraw    =   true;// dont reset canvas widths since alr sized + set DPR transform in init()
-  }
-  */
 
 
   private async loadBaseImage(): Promise<void> {
@@ -375,6 +322,31 @@ export class CrownMuralController {
       return { r: c.r | 0, g: c.g | 0, b: c.b | 0 };
     }
     return this.colorFallback}
+  private async loadUnifiedMAsk1(): Promise<void> {
+    const source = url(this.config.unifiedMaskPath || 'data/shape_masks/unified_mask.png');
+    try {
+        const res   =   await fetch(source, {cache:'no-store'});
+        if (!res.ok)    throw new Error(`HTTP ${res.status} for ${source}`);
+
+        const buffer    =   await res.arrayBuffer();
+        const dView =   new DataView(buffer);
+        const count =   buffer.byteLength   >>> 1;
+        const out   =   new Uint16Array(count);
+
+        for (let i=0,o=0; i <   count; i++,o+=2)    {
+            out[i] =   dView.getUint16(o,true)}
+        this.unifiedMaskIndex16=out;
+        if (!this.metadata) throw new Error('metadata.json not loaded before unified mask');
+        this.unifiedMaskHeight  = this.metadata.dimensions.height  | 0;
+        this.unifiedMaskWidth  = this.metadata.dimensions.width  | 0;
+        if (out.length !== this.unifiedMaskWidth * this.unifiedMaskHeight) {
+          console.warn(`[unified_mask.u16] length mismatch: have ${out.length}, ` +
+            `expected ${this.unifiedMaskWidth * this.unifiedMaskHeight}`);
+        }
+
+    } catch (err) {console.warn('Unified .u16 mask ' +
+        'load failed; no per-pixel indices available:', err)}
+  }
   private async loadUnifiedMask(): Promise<void> {
     const maskPath = this.config.unifiedMaskPath || 'data/shape_masks/unified_mask.png';
     return new Promise((resolve) => {
@@ -439,7 +411,7 @@ export class CrownMuralController {
       const testIdBGR = (() => {
         const x = Math.floor(r0.centroid.x), y = Math.floor(r0.centroid.y);
         const idx = (y * this.idImageData.width + x) * 4, d = this.idImageData.data;
-        return (d[idx]+2 <<16 | (d[idx+1] << 8) | (d[idx]));
+        return (d[idx+2] <<16 | (d[idx+1] << 8) | (d[idx]));
       })();
       const hasRGB = this.regions.has(testIdRGB);
       const hasBGR = this.regions.has(testIdBGR);
