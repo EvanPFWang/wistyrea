@@ -11,7 +11,7 @@ export default defineConfig({
         }
       }
     }
-  },esbuild: {drop: ['console', 'debugger'],pure: ['console.log']},
+  },esbuild: {drop: ['debugger'],pure: ['console.log']},
   server: {
     port: 3000
   }

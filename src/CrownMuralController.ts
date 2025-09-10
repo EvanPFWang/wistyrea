@@ -1,5 +1,6 @@
 // src/CrownMuralController.ts
 import {RGB, Hex, Palette, Metadata,Region, ProjectType, ControllerConfig} from "./types.ts";
+import {l} from "vite/dist/node/types.d-aGj9QkWt";
 
 const RAW_BASE = import.meta.env.BASE_URL ?? '/';
 const BASE     = RAW_BASE.endsWith('/') ? RAW_BASE : RAW_BASE + '/';
@@ -322,37 +323,39 @@ export class CrownMuralController {
   */
 
 
-private async loadBaseImage(): Promise<void> {
-  const source = url(this.config.baseImagePath ?? 'Mural_Crown_of_Italian_city.svg.png');
+  private async loadBaseImage(): Promise<void> {
+    const rawSource = url(this.config.baseImagePath ?? 'Mural_Crown_of_Italian_city.svg.png');
 
-  const img = new Image();
-  img.decoding = 'async';
+    const img = new Image();
+    img.decoding = 'async';
+    const source  =   new URL(rawSource, document.baseURI)
+    if (source.origin !== location.origin) img.crossOrigin = 'anonymous';
 
-  if (!source.startsWith(location.origin)) img.crossOrigin = 'anonymous';
-
-  //set src
-  img.src = source;
-
-  try {
-    if ('decode' in img) {
-      await img.decode();
-    } else {
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('load error'));
-      });
+      //set src
+    img.src = source.href;
+    try {
+      if ('decode' in img) {
+        await img.decode();
+      } else {
+        await new Promise<void>((resolve, reject) => {
+            img.onload = () => resolve();
+            img.onerror = () => reject(new Error('load error'));
+        });
+      }
+    } catch {
+      let ok = false
+      let isImage = false;
+      try{
+        const r = await fetch(source.href, { method: 'HEAD', cache: 'no-store' });
+        ok    =   r.ok;
+        isImage   =   (r.headers.get('content-type') || '')
+            .toLowerCase().startsWith('image/');
+      }catch{}//distinguish 404 vs decode failure for clearer logs
+      throw new Error(
+        ok && isImage
+            ? `Failed to decode base image at ${source} (format/corruption?).`
+            : `Base image not found at ${source}. Ensure it lives in /public or is imported via ?url, and that the filename + case match exactly.`);
     }
-  } catch {
-    //distinguish 404 vs decode failure for clearer logs
-    const ok = await fetch(source, { method: 'HEAD', cache: 'no-store' })
-      .then(r => r.ok).catch(() => false);
-    throw new Error(
-      ok
-        ? `Failed to decode base image at ${source} (format/corruption?).`
-        : `Base image not found at ${source}. Ensure it lives in /public or is imported via ?url, and that the filename + case match exactly.`
-    );
-  }
-
   this.baseImage = img;
   //canvas dims alr sized + set DPR transform in init().
   this.needsRedraw = true;
