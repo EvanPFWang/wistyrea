@@ -31,6 +31,9 @@ import cv2 as cv
 import numpy as np
 import json
 
+from scipy.stats import alpha
+
+
 def _repo_root_from_this_file() -> Path:
     #assumes this file lives at repo_root/scripts/regions.py (adjust .. count if needed)
     return Path(__file__).resolve().parents[1]
@@ -42,6 +45,11 @@ def _abs_out(p: str | Path, base: Path) -> Path:
     """
     p = Path(p)
     return p if p.is_absolute() else (base / p)
+def to_rgba(img_bgr: np.ndarray) -> np.ndarray:
+    return cv.cvtColor(img_bgr,  cv.COLOR_BGRA2RGBA)
+
+def to_bgra(img_rgb: np.ndarray) -> np.ndarray:
+    return cv.cvtColor(img_rgb, cv.COLOR_RGBA2BGRA)
 
 def auto_canny(gray: np.ndarray, sigma: float = 0.33,
                aperture_size: int = 3, L2: bool = True) -> np.ndarray:
@@ -252,9 +260,14 @@ def export_shape_masks(
         p = out_dir / f"shape_{(j-1):03d}.png"
         cv.imwrite(str(p), m)
         saved.append(p)
-
+    R = (unified        & 0xFF).astype(np.uint8)     # byte 0 (LSB)
+    G = ((unified >> 8) & 0xFF).astype(np.uint8)     # byte 1
+    B = ((unified >>16) & 0xFF).astype(np.uint8)     # byte 2 (MSB)
+    alpha   =   ((unified >>24) & 0xFF).astype(np.uint8)
+    unified_bgra = np.dstack([B, G, R, alpha ])
+    unified_rgba = np.dstack([B, G, R,   alpha])
     # after loop finishes, save unified mask in the same directory
-    cv.imwrite(str(out_dir / "unified_mask.png"), unified)
+    cv.imwrite(str(out_dir / "unified_mask.png"), unified_bgra)
     u16_le = unified.astype("<u2", copy=False)  # guaranteed endian 16-bit for web
     with open(out_dir / "unified_mask.u16", "wb") as f:
         f.write(u16_le.tobytes())
@@ -275,12 +288,12 @@ def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
         if palette is None: palette = []
         needed = n - len(palette)
         rng = np.random.default_rng(42)
-        palette += [tuple(int(x) for x in rng.integers(64, 256, size=3)) for _ in range(needed)]
-
+        palette += [tuple(int(x) for x in rng.integers(64, 256, size=3)) for _ in range(needed)]  #RGB
+    palette_bgr = [(r2, g2, b2)[::-1] for (r2, g2, b2) in palette]
     #draw each top-level with its colour; holes are black
     for j, i in enumerate(top):
-        _draw_subtree_color(color_map, contours, hier, i, root_color=palette[j], hole_color=(0,0,0))
-    return color_map
+        _draw_subtree_color(color_map, contours, hier, i, root_color=palette_bgr[j], hole_color=(0,0,0))#draws with bgr palette
+    return color_map#conv to rgb @savetime
 
 
 
@@ -296,6 +309,7 @@ def export_background_and_idmap(
     contours: List[np.ndarray],
     hier: np.ndarray,
     shape_hw: Tuple[int, int],
+    idxs:List[int],
     *,
     out_bg: str = "\public\data\mask_background.png",
     out_idmap: str = "\public\data\id_map.png",
@@ -315,21 +329,30 @@ def export_background_and_idmap(
     """
     h, w = shape_hw
     bg = np.full((h, w), 255, np.uint8)
-    id_map = np.zeros((h, w, 3), np.uint8)
-    top = _stable_top_level_indices(hier, contours)
-    for j, i in enumerate(top, start=1):
+    id_map_rgba = np.zeros((h, w, 4), np.uint8)
+    id_map_bgra = np.zeros((h, w, 4), np.uint8)
+    #top = _stable_top_level_indices(hier, contours)
+    for j, i in enumerate(idxs, start=1):
         #create temp mask for region i
         m = np.zeros((h, w), np.uint8)
         _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
-        bg[m > 0] = 0
         #encode j into B,G,R (OpenCV uses BGR ordering)
-        r = (j >> 16) & 0xFF
-        g = (j >> 8) & 0xFF
-        b = j & 0xFF
-        id_map[m > 0] = (b, g, r)
+        select = m > 0
+        bg[select] = 0
+
+        # pack j into (R,G,B) so id = R + (G<<8) + (B<<16)
+        R =  (j       ) & 0xFF
+        G =  (j >> 8  ) & 0xFF
+        B =  (j >> 16 ) & 0xFF
+        alpha   =   (j >> 24 ) & 0xFF
+
+        id_map_rgba[select, 0] = R
+        id_map_rgba[select, 1] = G
+        id_map_rgba[select, 2] = B
+        id_map_rgba[select, 3] = alpha
     cv.imwrite(out_bg, bg)
-    cv.imwrite(out_idmap, id_map)
-    return len(top)
+    cv.imwrite(out_idmap, to_bgra(id_map_rgba))
+    return idxs
 
 
 def export_metadata(
@@ -390,6 +413,7 @@ def export_metadata(
         cy = float(M["m01"] / (M["m00"] + 1e-9))
         regions.append(
             {
+                ""
                 "id": j,
                 "bbox": bbox,
                 "centroid": {"x": cx, "y": cy},
@@ -408,21 +432,21 @@ def export_metadata(
 
 
 def export_palette_json(
-    palette_bgr: List[Tuple[int, int, int]],
+    palette: List[Tuple[int, int, int]],
     *,
-    out_json: str = "palette.json",
+    out_json: str = "palette.json",#this will be in bgra
 ) -> None:
     """
     Write a mapping of region id to RGB values.  "palette_bgr[j-1]"
-    corresponds to region id "j".  OpenCV uses BGR ordering, so convert
-    back to RGB for the JSON file.
+    corresponds to region id "j".  DOESNT DO THIS ```OpenCV uses BGR ordering, so convert
+    back to RGB for the JSON file```.
+    indexes are 1-based
     """
+    #takes in rgb palette
     #Map id -> color (in RGB)
     #[POST - HELLO CHECK to see if indexes
-    mapping = {
-        int(i + 1): {"r": int(r), "g": int(g), "b": int(b)}
-        for i, (b, g, r) in enumerate(palette_bgr)
-    }
+    mapping = {int(i + 1): {"r": int(r), "g": int(g), "b": int(b)}
+        for i, (r, g, b) in enumerate(palette)}#encodes to rgb json
     data = {"background_id": 0, "map": mapping}
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -456,7 +480,7 @@ def palette_kbatchmeans_rgb(n: int,
     """
     Build n roughly evenly-spaced RGB colours by clustering a uniform RGB sample.
     Uses sklearn MiniBatchKMeans if available; otherwise falls back to cv2.kmeans.
-    Returns list of (B,G,R) tuples for OpenCV drawing.
+    Returns list of (R,G,B) tuples for OpenCV drawing.
     """
     X = _rgb_sample_grid(step=sample_step)  #float32 in [0,255]
     centers = None
@@ -484,9 +508,10 @@ def palette_kbatchmeans_rgb(n: int,
         )
 
     centers = np.clip(centers, 0, 255).astype(np.uint8)  #RGB uint8
-    #Convert RGB to BGR for OpenCV drawing
-    centers_bgr = [(int(c[2]), int(c[1]), int(c[0])) for c in centers]
-    return centers_bgr
+    #no longeer Convert RGB to BGR for OpenCV drawing
+    centers_rgb = np.clip(centers, 0, 255).astype(np.uint8) # The clustered colors are in RGB
+    centers_bgr = [(int(c[2]), int(c[1]), int(c[0])) for c in centers_rgb] # Explicitly convert RGB to BG
+    return centers_rgb
 
 
 #---------- Main pipeline (this is the function your CLI calls) ----------
@@ -503,7 +528,7 @@ def process_image(
     do_threshold: bool = False,
     blur_ksize: int = 1,
     canny_sigma: float = 0.33,
-    mask_mode: str = "top",
+    mask_mode: str = "all",
     palette_mode: str = "kbatch",   #NEW: {"kbatch","random"}
     sample_step: int = 7,
 ):
@@ -542,7 +567,8 @@ def process_image(
         n_top = sum(1 for i in range(len(contours)) if hierarchy[i, 3] == -1)
         if n_top > 0:   palette = palette_kbatchmeans_rgb(n_top, sample_step=sample_step)
 
-    color_map = colorize_regions(contours, hierarchy, filled.shape, palette=palette)
+    color_map_bgr = colorize_regions(contours, hierarchy, filled.shape, palette=palette)
+    color_map_rgb = cv.cvtColor(color_map_bgr, cv.COLOR_BGR2RGB)
     overlay   = draw_overlay(img, contours, color=(0,255,0), thick=2)
 
     repo_root = _repo_root_from_this_file()
@@ -559,15 +585,15 @@ def process_image(
     color_path = _abs_out(out_color_path, data_dir)
 
     # Write visual outputs (anchored)
-    cv.imwrite(str(overlay_path), overlay)
+    cv.imwrite(str(overlay_path), to_rgba(overlay))
     cv.imwrite(str(filled_path), filled)
-    cv.imwrite(str(color_path), color_map)
+    cv.imwrite(str(color_path), color_map_rgb)
 
 
     masks_dir_path = data_dir / "shape_masks"
     masks_dir_path.mkdir(parents=True, exist_ok=True)
 
-    saved_masks = export_shape_masks(
+    saved_masks,idxs = export_shape_masks(
         contours=contours,
         hier=hierarchy,
         shape_hw=filled.shape,
@@ -593,10 +619,11 @@ def process_image(
     print(f"Shape masks are being exported to: {masks_dir_path}")
 
     #Export background + ID map and metadata
-    num_regions = export_background_and_idmap(
+    regions = export_background_and_idmap(
         contours,
         hierarchy,
         filled.shape,
+        idxs,
         out_bg=str(data_dir / "mask_background.png"),
         out_idmap=str(data_dir / "id_map.png"),
     )
@@ -608,10 +635,10 @@ def process_image(
         masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),
     )
     #If palette is defined, persist it so the web app can use the same colours
-    if palette is not None:
-        export_palette_json(palette, out_json=str(data_dir / "palette.json"))
+    if palette is not None:#palette is RGB
+        export_palette_json(palette, out_json=str(data_dir / "palette.json"))#takes in rgb
 
-    return edges_closed, filled, color_map, contours, hierarchy, saved_masks
+    return edges_closed, filled, color_map_rgb, contours, hierarchy, saved_masks
 #---------- CLI ----------
 
 def _find_default_image() -> Optional[str]:
