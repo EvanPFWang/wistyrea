@@ -233,7 +233,8 @@ def export_shape_masks(
     if mask_mode == "top":
         idxs = [i for i in range(len(contours)) if hier[i, 3] == -1]
         draw = lambda m, i: _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
-    elif mask_mode == "even":
+    elif mask_mode == ("eve"
+                       "n"):
         idxs = [i for i in range(len(contours)) if _depth(i, hier) % 2 == 0]
         draw = lambda m, i: cv.drawContours(m, contours, i, 255, thickness=-1, lineType=cv.LINE_8)
     elif mask_mode == "all":
@@ -244,8 +245,8 @@ def export_shape_masks(
 
     #sort by centroid for a deterministic ordering
     def centroid(i):
-        M = cv.moments(contours[i])
-        return (M["m01"]/(M["m00"]+1e-9), M["m10"]/(M["m00"]+1e-9))
+        m = cv.moments(contours[i]); x = (m["m10"] / (m["m00"] + 1e-9)); y = (m["m01"] / (m["m00"] + 1e-9))
+        return (x, y)
 
     idxs.sort(key=centroid)
     dtype = np.uint16 if len(idxs) >= 256 else np.uint8
@@ -256,7 +257,7 @@ def export_shape_masks(
         draw(m, i)  # draw the j‑th contour into m
         unified[m > 0] = j  # paint region ID into the unified mask
 
-        # save individual mask
+        # save individual mask maybe convert this part to 1-based
         p = out_dir / f"shape_{(j-1):03d}.png"
         cv.imwrite(str(p), m)
         saved.append(p)
@@ -265,7 +266,7 @@ def export_shape_masks(
     B = ((unified >>16) & 0xFF).astype(np.uint8)     # byte 2 (MSB)
     alpha   =   ((unified >>24) & 0xFF).astype(np.uint8)
     unified_bgra = np.dstack([B, G, R, alpha ])
-    unified_rgba = np.dstack([B, G, R,   alpha])
+    unified_rgba = np.dstack([R, G, B,   alpha])
     # after loop finishes, save unified mask in the same directory
     cv.imwrite(str(out_dir / "unified_mask.png"), unified_bgra)
     u16_le = unified.astype("<u2", copy=False)  # guaranteed endian 16-bit for web
@@ -433,6 +434,7 @@ def export_metadata(
 
 def export_palette_json(
     palette: List[Tuple[int, int, int]],
+        colourmap,
     *,
     out_json: str = "palette.json",#this will be in bgra
 ) -> None:
@@ -442,6 +444,7 @@ def export_palette_json(
     back to RGB for the JSON file```.
     indexes are 1-based
     """
+    out_colorMap: str = "colourmap.json"
     #takes in rgb palette
     #Map id -> color (in RGB)
     #[POST - HELLO CHECK to see if indexes
@@ -450,7 +453,8 @@ def export_palette_json(
     data = {"background_id": 0, "map": mapping}
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-
+    with open(out_colorMap, "w", encoding="utf-8") as f:
+        json.dump(colourmap, f, ensure_ascii=False, indent=2)
 #---------- Palette: MiniBatch K-Means in RGB (with OpenCV fallback) ----------
 
 def _stable_top_level_indices(hier: np.ndarray, contours: List[np.ndarray]) -> List[int]:
@@ -458,7 +462,7 @@ def _stable_top_level_indices(hier: np.ndarray, contours: List[np.ndarray]) -> L
     idxs = [i for i in range(len(contours)) if hier[i, 3] == -1]
     def centroid(i):
         m = cv.moments(contours[i]); x = (m["m10"]/(m["m00"]+1e-9)); y = (m["m01"]/(m["m00"]+1e-9))
-        return (y, x)
+        return (x, y)
     idxs.sort(key=centroid)
     return idxs
 
@@ -625,19 +629,17 @@ def process_image(
         filled.shape,
         idxs,
         out_bg=str(data_dir / "mask_background.png"),
-        out_idmap=str(data_dir / "id_map.png"),
+        out_idmap=str(data_dir / "coloured_map.png"),
     )
     export_metadata(
         contours,
         hierarchy,
         filled.shape,
         out_json=str(data_dir / "metadata.json"),
-        masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),
-    )
+        masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),)
     #If palette is defined, persist it so the web app can use the same colours
     if palette is not None:#palette is RGB
-        export_palette_json(palette, out_json=str(data_dir / "palette.json"))#takes in rgb
-
+        export_palette_json(palette,color_map_rgb, out_json=str(data_dir / "palette.json"))#takes in rgb
     return edges_closed, filled, color_map_rgb, contours, hierarchy, saved_masks
 #---------- CLI ----------
 
@@ -649,17 +651,14 @@ def _find_default_image() -> Optional[str]:
         for p in glob.glob(pat):
             if Path(p).is_file():
                 return p
-
     return None
 
 
 if __name__ == "__main__":
     import argparse
-
     parser = argparse.ArgumentParser(
         description="Edge -> Region -> Colour segmentation",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,)
     parser.add_argument("image", nargs="?", help="Path to input image", default=r"\..")
     parser.add_argument("--image", dest="image_opt", help="Alternative to positional image path")
     """        out_overlay_path=args.overlay,
@@ -700,23 +699,14 @@ if __name__ == "__main__":
             print(f"WARNING: Could not read --edge '{args.edge}'. Falling back to Canny.", file=sys.stderr)
         else:
             have_edges = (em > 0).astype("uint8") * 255
-
     edges, filled, color_map, contours, hierarchy, saved = process_image(
-        img_path,
-        out_overlay_path=args.overlay,
-        out_filled_path=args.filled,
-        out_color_path=args.color,
-        out_masks_dir=args.masks_dir,
-        have_edges=have_edges,
-        min_area=args.min_area,
-        gap_close=args.gap_close,
-        do_threshold=args.threshold,
-        blur_ksize=args.blur,
-        canny_sigma=args.canny_sigma,
-        palette_mode=args.palette_mode,  #NEW
-        sample_step=args.sample_step,  #NEW
-    )
-
+        img_path, out_overlay_path=args.overlay,
+        out_filled_path=args.filled, out_color_path=args.color,
+        out_masks_dir=args.masks_dir, have_edges=have_edges,
+        min_area=args.min_area, gap_close=args.gap_close,
+        do_threshold=args.threshold, blur_ksize=args.blur,
+        canny_sigma=args.canny_sigma,palette_mode=args.palette_mode,  #NEW
+        sample_step=args.sample_step,)  #NEW
     print(f"[OK] Saved:\n  • {args.overlay}\n  • {args.filled}\n  • {args.color}\n"
           f"  • {len(saved)} masks in '{args.masks_dir}/'")
     print(f"Contours kept: {len(contours)}")
