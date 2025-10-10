@@ -326,7 +326,8 @@ def export_background_and_idmap(
     contours: List[np.ndarray],
     hier: np.ndarray,
     shape_hw: Tuple[int, int],
-    idxs:List[int],
+    mapping_dict: Dict[int, int],
+    idxs: List[int],
     *,
     out_bg: str = "\public\data\mask_background.png",
     out_idmap: str = "\public\data\id_map.png",
@@ -347,7 +348,6 @@ def export_background_and_idmap(
     h, w = shape_hw
     bg = np.full((h, w), 255, np.uint8)
     id_map_rgba = np.zeros((h, w, 4), np.uint8)
-    id_map_bgra = np.zeros((h, w, 4), np.uint8)
     #top = _stable_top_level_indices(hier, contours)
     for j, i in enumerate(idxs, start=1):
         #create temp mask for region i
@@ -709,7 +709,7 @@ def process_image(
         contours,
         hierarchy,
         filled.shape,
-        saved_masks,
+        ordered_palette_to_centroid_ordering_dict,original_idxs,
         out_bg=str(data_dir / "mask_background.png"),
         out_idmap=str(data_dir / "coloured_map.png"),
     )
