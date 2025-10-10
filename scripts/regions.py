@@ -149,26 +149,26 @@ def _draw_subtree_gray(
     contours: List[np.ndarray],
     hier: np.ndarray,
     root_idx: int,
-    root_color: int = 255,
-    hole_color: int = 0,
+    root_colour: int = 255,
+    hole_colour: int = 0,
     *,
     line_type: int = cv.LINE_AA,
 ) -> None:
     """
     Draw a contour subtree into a single-channel mask.  Even depths (region interiors)
-    are painted with "root_color" while odd depths (holes) are painted with
-    "hole_color".  By default anti‑aliased edges are used; pass "line_type=cv.LINE_8"
+    are painted with "root_colour" while odd depths (holes) are painted with
+    "hole_colour".  By default anti‑aliased edges are used; pass "line_type=cv.LINE_8"
     for crisp, non–anti‑aliased masks (useful for ID maps).
     """
     stack = [(root_idx, 0)]
     while stack:
         i, depth = stack.pop()
-        color = root_color if (depth % 2 == 0) else hole_color
+        colour = root_colour if (depth % 2 == 0) else hole_colour
         #Note: thickness=-1 fills the entire contour region.
         cv.drawContours(mask,
             contours,
             i,
-            color=int(color),
+            color=int(colour),
             thickness=-1,
             lineType=line_type,
         )
@@ -178,30 +178,30 @@ def _draw_subtree_gray(
             child = hier[child, 0]
 
 
-def _draw_subtree_color(
+def _draw_subtree_colour(
     img: np.ndarray,
     contours: List[np.ndarray],
     hier: np.ndarray,
     root_idx: int,
-    root_color: Tuple[int, int, int],
-    hole_color: Tuple[int, int, int] = (0, 0, 0),
+    root_colour: Tuple[int, int, int],
+    hole_colour: Tuple[int, int, int] = (0, 0, 0),
     *,
     line_type: int = cv.LINE_AA,
 ) -> None:
     """
     Draw a contour subtree into a three‑channel image.  Even depths use
-    "root_color"; odd depths use "hole_color".  Pass "line_type=cv.LINE_8"
+    "root_colour"; odd depths use "hole_colour".  Pass "line_type=cv.LINE_8"
     to disable anti‑aliasing when generating ID maps.
     """
     stack = [(root_idx, 0)]
     while stack:
         i, depth = stack.pop()
-        color = root_color if (depth % 2 == 0) else hole_color
+        colour = root_colour if (depth % 2 == 0) else hole_colour
         cv.drawContours(
             img,
             contours,
             i,
-            color=color,
+            color=colour,
             thickness=-1,
             lineType=line_type,
         )
@@ -294,7 +294,7 @@ def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
                      shape_hw: Tuple[int,int],
                      palette: Optional[List[Tuple[int,int,int]]] = None) -> np.ndarray:
     h, w = shape_hw
-    color_map = np.zeros((h, w, 3), np.uint8)
+    colour_map = np.zeros((h, w, 3), np.uint8)
 
     #determine top-level shapes in a stable order
     top = _stable_top_level_indices(hier, contours,shape_hw)
@@ -309,15 +309,15 @@ def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
     palette_bgr = [(r2, g2, b2)[::-1] for (r2, g2, b2) in palette]
     #draw each top-level with its colour; holes are black
     for j, i in enumerate(top):
-        _draw_subtree_color(color_map, contours, hier, i, root_color=palette_bgr[j], hole_color=(0,0,0))#draws with bgr palette
-    return color_map, palette_bgr#color_map is palette but cnetroid ordered
+        _draw_subtree_colour(colour_map, contours, hier, i, root_colour=palette_bgr[j], hole_colour=(0,0,0))#draws with bgr palette
+    return colour_map, palette_bgr#colour_map is palette but cnetroid ordered
     #conv to rgb @savetime
 
 
 def draw_overlay(img_bgr: np.ndarray, contours: List[np.ndarray],
-                 color=(0,255,0), thick=2) -> np.ndarray:
+                 colour=(0,255,0), thick=2) -> np.ndarray:
     overlay = img_bgr.copy()
-    cv.drawContours(overlay, contours, -1, color, thick, lineType=cv.LINE_AA)
+    cv.drawContours(overlay, contours, -1, colour, thick, lineType=cv.LINE_AA)
     return overlay
 
 #---------- ID map and metadata exporters ----------
@@ -458,7 +458,7 @@ def export_palette_json(
     palette_keys: Optional[Sequence[int]] = None,  # when palette is keyed by orig_idx, pass that list here
 ) -> None:
     """
-    palette keyed by new_id (default): palette[j-1] is color for region id j.
+    palette keyed by new_id (default): palette[j-1] is colour for region id j.
     palette keyed by orig_idx: pass `palette_keys` (a sequence of original contour indices in palette order)
         and `mapping_dict={orig_idx->new_id}`; we'll remap to new ids.
 
@@ -466,9 +466,9 @@ def export_palette_json(
     back to RGB for the JSON file```.
     region ids 1-based and colors RGB triplets.
     """
-    out_colorMap: str = "colourmap.json"
+    out_colourMap: str = "colourmap.json"
     #takes in rgb palette
-    #Map id -> color (in RGB)
+    #Map id -> colour (in RGB)
     #[POST - HELLO CHECK to see if indexes
 
     if palette_keys is None:
@@ -601,7 +601,7 @@ def process_image(
     img_path: str,
     out_overlay_path: str = "contours_overlay.png",
     out_filled_path: str  = "filled_mask.png",
-    out_color_path: str   = "coloured_regions.png",
+    out_colour_path: str   = "coloured_regions.png",
     out_masks_dir: str    = "shape_masks",
     have_edges: Optional[np.ndarray] = None,
     min_area: int = 20,
@@ -665,8 +665,8 @@ def process_image(
         mask_mode=mask_mode,
     )
 
-    color_map_bgr,palette_bgr   =   colorize_regions(contours, hierarchy, filled.shape, palette=palette)
-    color_map_rgb = cv.cvtColor(color_map_bgr, cv.COLOR_BGR2RGB)
+    colour_map_bgr,palette_bgr   =   colorize_regions(contours, hierarchy, filled.shape, palette=palette)
+    colour_map_rgb = cv.cvtColor(colour_map_bgr, cv.COLOR_BGR2RGB)
     overlay   = draw_overlay(img, contours, color=(0,255,0), thick=2)
 
 
@@ -674,12 +674,12 @@ def process_image(
     #Normalize preview outputs too: if caller passed bare names, send to public/data
     overlay_path = _abs_out(out_overlay_path, data_dir)
     filled_path = _abs_out(out_filled_path, data_dir)
-    color_path = _abs_out(out_color_path, data_dir)
+    colour_path = _abs_out(out_colour_path, data_dir)
 
     # Write visual outputs (anchored)
     cv.imwrite(str(overlay_path), to_rgba(overlay))
     cv.imwrite(str(filled_path), filled)
-    cv.imwrite(str(color_path), color_map_rgb)
+    cv.imwrite(str(colour_path), colour_map_rgb)
 
 
     masks_dir_path = data_dir / "shape_masks"
@@ -722,10 +722,10 @@ def process_image(
     #If palette is defined, persist it so the web app can use the same colours
     if palette is not None:#palette is RGB
         #COME BACK HERE for idxs being a dict from originally ordered palette
-        export_palette_json(palette,color_map_rgb,
+        export_palette_json(palette,colour_map_rgb,
                             out_json=str(data_dir / "palette.json"),
                             mapping_dict=ordered_palette_to_centroid_ordering_dict)#takes in rgb
-    return edges_closed, filled, color_map_rgb, contours, hierarchy, saved_masks
+    return edges_closed, filled, colour_map_rgb, contours, hierarchy, saved_masks
 #---------- CLI ----------
 
 def _find_default_image() -> Optional[str]:
@@ -748,7 +748,7 @@ if __name__ == "__main__":
     parser.add_argument("--image", dest="image_opt", help="Alternative to positional image path")
     """        out_overlay_path=args.overlay,
         out_filled_path=args.filled,
-        out_color_path=args.color,"""
+        out_colour_path=args.color,"""
     parser.add_argument("--overlay", default="contours_overlay.png", help="Output: contours overlay (BGR)")
     parser.add_argument("--filled",  default="filled_mask.png",      help="Output: filled binary mask")
     parser.add_argument("--color",   default="coloured_regions.png", help="Output: per-region coloured map")
@@ -784,9 +784,9 @@ if __name__ == "__main__":
             print(f"WARNING: Could not read --edge '{args.edge}'. Falling back to Canny.", file=sys.stderr)
         else:
             have_edges = (em > 0).astype("uint8") * 255
-    edges, filled, color_map, contours, hierarchy, saved = process_image(
+    edges, filled, colour_map, contours, hierarchy, saved = process_image(
         img_path, out_overlay_path=args.overlay,
-        out_filled_path=args.filled, out_color_path=args.color,
+        out_filled_path=args.filled, out_colour_path=args.color,
         out_masks_dir=args.masks_dir, have_edges=have_edges,
         min_area=args.min_area, gap_close=args.gap_close,
         do_threshold=args.threshold, blur_ksize=args.blur,
