@@ -25,7 +25,7 @@ Sources
 from __future__ import annotations
 import os, sys, glob
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Sequence, Dict, Union
 
 import cv2 as cv
 import numpy as np
@@ -38,7 +38,7 @@ def _repo_root_from_this_file() -> Path:
     #assumes this file lives at repo_root/scripts/regions.py (adjust .. count if needed)
     return Path(__file__).resolve().parents[1]
 
-def _abs_out(p: str | Path, base: Path) -> Path:
+def _abs_out(p: Union[str, Path], base: Path) -> Path:
     """
     If p is absolute (or drive-rooted on Windows like '\\foo'), use it as-is,
     otherwise write under 'base'.
@@ -165,8 +165,7 @@ def _draw_subtree_gray(
         i, depth = stack.pop()
         color = root_color if (depth % 2 == 0) else hole_color
         #Note: thickness=-1 fills the entire contour region.
-        cv.drawContours(
-            mask,
+        cv.drawContours(mask,
             contours,
             i,
             color=int(color),
@@ -218,13 +217,14 @@ def export_shape_masks(
     shape_hw: Tuple[int, int],
     out_dir: Path,
     mask_mode: str = "top",
-) -> List[Path]:
+) -> Tuple[List[Path], Dict[int, int], List[int]]:
     """
     Export binary masks for contours.  mask_mode controls which contours are saved:
       "top": only top‑level contours (current behaviour)
       "even": only even‑depth contours (filled interiors, holes skipped)
       "all": every contour, including holes
     """
+
     out_dir.mkdir(parents=True, exist_ok=True)
     h, w = shape_hw
     saved: List[Path] = []
@@ -233,8 +233,7 @@ def export_shape_masks(
     if mask_mode == "top":
         idxs = [i for i in range(len(contours)) if hier[i, 3] == -1]
         draw = lambda m, i: _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
-    elif mask_mode == ("eve"
-                       "n"):
+    elif mask_mode == ("even"):
         idxs = [i for i in range(len(contours)) if _depth(i, hier) % 2 == 0]
         draw = lambda m, i: cv.drawContours(m, contours, i, 255, thickness=-1, lineType=cv.LINE_8)
     elif mask_mode == "all":
@@ -243,15 +242,28 @@ def export_shape_masks(
     else:
         raise ValueError("mask_mode must be one of {'top','even','all'}")
 
-    #sort by centroid for a deterministic ordering
-    def centroid(i):
-        m = cv.moments(contours[i]); x = (m["m10"] / (m["m00"] + 1e-9)); y = (m["m01"] / (m["m00"] + 1e-9))
-        return (x, y)
+    """def _centroid(i):
+        m = cv.moments(contours[i]);
+        x = (m["m10"] / (m["m00"] + 1e-9));
+        y = (m["m01"] / (m["m00"] + 1e-9))
+        return (x, y)"""
+    original_idxs = np.array(idxs, dtype=int)
+    centroids = [cv.moments(contours[i]) for i in original_idxs]
+    cx = np.array([m["m10"] / (m["m00"] + 1e-9) for m in centroids])
+    cy = np.array([m["m01"] / (m["m00"] + 1e-9) for m in centroids])
 
-    idxs.sort(key=centroid)
-    dtype = np.uint16 if len(idxs) >= 256 else np.uint8
-    unified = np.zeros((h, w), dtype=dtype)
 
+    cx0 = (w - 1) / 2.0;cy0 = (h - 1) / 2.0;d = np.hypot(cx - cx0, cy - cy0)
+    sort_order = np.argsort(d,kind="stable")
+    sorted_original_idxs = original_idxs[sort_order]#for stable sorting based on multiple keys, np.lexsort is the right tool.
+
+    idxs    =   np.array(idxs).tolist()
+    mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(sorted_original_idxs, start=1)}
+
+    dtype   =   np.uint16   if len(idxs) >= 256 else np.uint8
+    dtype   =   np.uint32 if len(idxs)>=256*256 else dtype
+    unified =   np.zeros((h, w), dtype=dtype)
+    bit_count_str   =   str(dtype)[3:]#"8","16","32"
     for j, i in enumerate(idxs, start=1):
         m = np.zeros((h, w), np.uint8)
         draw(m, i)  # draw the j‑th contour into m
@@ -269,10 +281,14 @@ def export_shape_masks(
     unified_rgba = np.dstack([R, G, B,   alpha])
     # after loop finishes, save unified mask in the same directory
     cv.imwrite(str(out_dir / "unified_mask.png"), unified_bgra)
-    u16_le = unified.astype("<u2", copy=False)  # guaranteed endian 16-bit for web
-    with open(out_dir / "unified_mask.u16", "wb") as f:
-        f.write(u16_le.tobytes())
-    return saved
+    # write little-endian bytes for web use (u8/u16/u32)
+    if dtype == np.uint8:raw = unified.astype("|u1", copy=False)
+    elif dtype == np.uint16:raw = unified.astype("<u2", copy=False)
+    else:raw = unified.astype("<u4", copy=False)
+    with open(out_dir / f"unified_mask.u{bit_count_str}", "wb") as f:
+        f.write(raw.tobytes())
+    # return masks, mapping (orig_idx -> 1-based id), and the sorted contour indices
+    return saved, mapping_dict, idxs
 
 def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
                      shape_hw: Tuple[int,int],
@@ -281,7 +297,7 @@ def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
     color_map = np.zeros((h, w, 3), np.uint8)
 
     #determine top-level shapes in a stable order
-    top = _stable_top_level_indices(hier, contours)
+    top = _stable_top_level_indices(hier, contours,shape_hw)
     n = len(top)
 
     #if no palette supplied, fall back to random
@@ -294,8 +310,8 @@ def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
     #draw each top-level with its colour; holes are black
     for j, i in enumerate(top):
         _draw_subtree_color(color_map, contours, hier, i, root_color=palette_bgr[j], hole_color=(0,0,0))#draws with bgr palette
-    return color_map#conv to rgb @savetime
-
+    return color_map, palette_bgr#color_map is palette but cnetroid ordered
+    #conv to rgb @savetime
 
 
 def draw_overlay(img_bgr: np.ndarray, contours: List[np.ndarray],
@@ -437,34 +453,95 @@ def export_palette_json(
         colourmap,
     *,
     out_json: str = "palette.json",#this will be in bgra
+
+    mapping_dict:  Optional[Dict[int, int]] = None,
+    palette_keys: Optional[Sequence[int]] = None,  # when palette is keyed by orig_idx, pass that list here
 ) -> None:
     """
-    Write a mapping of region id to RGB values.  "palette_bgr[j-1]"
+    palette keyed by new_id (default): palette[j-1] is color for region id j.
+    palette keyed by orig_idx: pass `palette_keys` (a sequence of original contour indices in palette order)
+        and `mapping_dict={orig_idx->new_id}`; we'll remap to new ids.
+
     corresponds to region id "j".  DOESNT DO THIS ```OpenCV uses BGR ordering, so convert
     back to RGB for the JSON file```.
-    indexes are 1-based
+    region ids 1-based and colors RGB triplets.
     """
     out_colorMap: str = "colourmap.json"
     #takes in rgb palette
     #Map id -> color (in RGB)
     #[POST - HELLO CHECK to see if indexes
-    mapping = {int(i + 1): {"r": int(r), "g": int(g), "b": int(b)}
-        for i, (r, g, b) in enumerate(palette)}#encodes to rgb json
-    data = {"background_id": 0, "map": mapping}
+
+    if palette_keys is None:
+        # Palette already in new-id order (1..N)
+        new_to_rgb = {j: {"r": int(r), "g": int(g), "b": int(b)}
+                      for j, (r, g, b) in enumerate(palette, start=1)}
+    else:
+        if mapping_dict is None:
+            raise ValueError("palette_keys provided but mapping_dict is None")
+        if len(palette_keys) != len(palette):
+            raise ValueError("palette_keys and palette must have same length")
+        new_to_rgb = {}
+        for (orig_idx, (r, g, b)) in zip(palette_keys, palette):
+            new_id = mapping_dict.get(orig_idx)
+            if new_id is None:
+                #skip or raise; choose raise for early surfacing of mismatches
+                raise KeyError(f"orig_idx {orig_idx} missing in mapping_dict")
+            new_to_rgb[int(new_id)] = {"r": int(r), "g": int(g), "b": int(b)}
+
+    data = {"background_id": 0, "map": new_to_rgb}
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    with open(out_colorMap, "w", encoding="utf-8") as f:
+    #keep colourmap sidecar
+    with open("colourmap.json", "w", encoding="utf-8") as f:
         json.dump(colourmap, f, ensure_ascii=False, indent=2)
-#---------- Palette: MiniBatch K-Means in RGB (with OpenCV fallback) ----------
 
-def _stable_top_level_indices(hier: np.ndarray, contours: List[np.ndarray]) -> List[int]:
-    """Deterministic order for top-level shapes: sort by (y, x) of contour centroid."""
-    idxs = [i for i in range(len(contours)) if hier[i, 3] == -1]
-    def centroid(i):
-        m = cv.moments(contours[i]); x = (m["m10"]/(m["m00"]+1e-9)); y = (m["m01"]/(m["m00"]+1e-9))
-        return (x, y)
-    idxs.sort(key=centroid)
+
+
+def _stable_top_level_indices(
+    hier: np.ndarray,
+    contours: List[np.ndarray],
+    shape_hw: Tuple[int, int],
+    *,
+    return_mapping: bool = False,
+) -> Union[List[int], Tuple[List[int], Dict[int, int]]]:
+    """
+    Deterministic order for *top-level* shapes:
+    sort by Euclidean distance from the image center (nearest first).
+
+    If return_mapping=True, also return {original_contour_idx -> 1-based new id}.
+    """
+    h, w = shape_hw
+
+    #top-level contours: parent == -1
+    #(OpenCV hierarchy layout: [next, prev, first_child, parent])
+    orig_idxs = np.where(hier[:, 3] == -1)[0]
+    if orig_idxs.size == 0:
+        return ([], {}) if return_mapping else []
+
+    #centroids via image moments: Cx = m10/m00, Cy = m01/m00
+    cx = np.empty(orig_idxs.size, dtype=float)
+    cy = np.empty(orig_idxs.size, dtype=float)
+    for k, i in enumerate(orig_idxs):
+        M = cv.moments(contours[i])
+        cx[k] = M["m10"] / (M["m00"] + 1e-9)
+        cy[k] = M["m01"] / (M["m00"] + 1e-9)
+
+    #image center
+    cx0 = (w - 1) / 2.0
+    cy0 = (h - 1) / 2.0
+
+    #Euclidean distance to center (numerically well-behaved)
+    d = np.hypot(cx - cx0, cy - cy0)
+
+    #nearest-to-center first; stable keep ties deterministic
+    order = np.argsort(d, kind="stable")
+    idxs = orig_idxs[order].tolist()
+
+    if return_mapping:
+        mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(idxs, start=1)}
+        return idxs, mapping_dict
     return idxs
+
 
 def _rgb_sample_grid(step: int = 7, lo: int = 24, hi: int = 231) -> np.ndarray:
     """
@@ -551,8 +628,9 @@ def process_image(
             g = cv.GaussianBlur(gray, (blur_ksize, blur_ksize), 0)
         edges = auto_canny(g, sigma=canny_sigma, aperture_size=3, L2=True)
 
-    #2) Close small gaps (optional)
-    ksize = gap_close if gap_close and gap_close > 1 else 2
+    #2) Close small gaps (optional) 1 disables closing;
+        # >=3 performs morphological closing with that kernel
+    ksize = gap_close if gap_close and gap_close > 1 else 1
     edges_closed = close_gaps(edges, ksize=ksize, shape=cv.MORPH_ELLIPSE, iters=1)
 
     #3) Regions from edges
@@ -571,10 +649,6 @@ def process_image(
         n_top = sum(1 for i in range(len(contours)) if hierarchy[i, 3] == -1)
         if n_top > 0:   palette = palette_kbatchmeans_rgb(n_top, sample_step=sample_step)
 
-    color_map_bgr = colorize_regions(contours, hierarchy, filled.shape, palette=palette)
-    color_map_rgb = cv.cvtColor(color_map_bgr, cv.COLOR_BGR2RGB)
-    overlay   = draw_overlay(img, contours, color=(0,255,0), thick=2)
-
     repo_root = _repo_root_from_this_file()
     data_dir = (repo_root / "public" / "data").resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -582,6 +656,20 @@ def process_image(
     #masks_dir: honor absolute paths; otherwise force under public/data
     masks_dir_path = _abs_out(out_masks_dir, data_dir)
     masks_dir_path.mkdir(parents=True, exist_ok=True)
+
+    saved_masks,ordered_palette_to_centroid_ordering_dict,original_idxs = export_shape_masks(
+        contours=contours,
+        hier=hierarchy,
+        shape_hw=filled.shape,
+        out_dir=masks_dir_path,
+        mask_mode=mask_mode,
+    )
+
+    color_map_bgr,palette_bgr   =   colorize_regions(contours, hierarchy, filled.shape, palette=palette)
+    color_map_rgb = cv.cvtColor(color_map_bgr, cv.COLOR_BGR2RGB)
+    overlay   = draw_overlay(img, contours, color=(0,255,0), thick=2)
+
+
 
     #Normalize preview outputs too: if caller passed bare names, send to public/data
     overlay_path = _abs_out(out_overlay_path, data_dir)
@@ -597,13 +685,7 @@ def process_image(
     masks_dir_path = data_dir / "shape_masks"
     masks_dir_path.mkdir(parents=True, exist_ok=True)
 
-    saved_masks,idxs = export_shape_masks(
-        contours=contours,
-        hier=hierarchy,
-        shape_hw=filled.shape,
-        out_dir=masks_dir_path,
-        mask_mode=mask_mode,
-    )
+
 
     try:
         #pref returned order else fallback to alphabetical in folder
@@ -627,7 +709,7 @@ def process_image(
         contours,
         hierarchy,
         filled.shape,
-        idxs,
+        saved_masks,
         out_bg=str(data_dir / "mask_background.png"),
         out_idmap=str(data_dir / "coloured_map.png"),
     )
@@ -639,7 +721,10 @@ def process_image(
         masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),)
     #If palette is defined, persist it so the web app can use the same colours
     if palette is not None:#palette is RGB
-        export_palette_json(palette,color_map_rgb, out_json=str(data_dir / "palette.json"))#takes in rgb
+        #COME BACK HERE for idxs being a dict from originally ordered palette
+        export_palette_json(palette,color_map_rgb,
+                            out_json=str(data_dir / "palette.json"),
+                            mapping_dict=ordered_palette_to_centroid_ordering_dict)#takes in rgb
     return edges_closed, filled, color_map_rgb, contours, hierarchy, saved_masks
 #---------- CLI ----------
 
