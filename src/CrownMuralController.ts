@@ -10,13 +10,15 @@ const ABS_BASE = new URL(BASE, document.baseURI); //e.g. https://site.tld/subapp
 const ABSOLUTE_RE = /^[a-zA-Z][\w+.-]*:|^\/\//;
 export const absUrl = (p: string) => {
   if (ABSOLUTE_RE.test(p)) return p;//already abs/proto-relative
-  const clean = p.replace(/^\/+/, '');//drop leading slashes
+  const clean = p.replace(/^\/+/, '').replace(/\\/g, '/');
+
   return new URL(clean, ABS_BASE).href}// fully qualified URL
 export const pathUrl = (p: string) => {
   const u = new URL(absUrl(p));
   return u.pathname + u.search + u.hash}//originless path
 
 export const url    =   absUrl
+export const pathnameOf = (p: string) => new URL(absUrl(p)).pathname;
 
 
 async function fetchJSON<T>(path: string, { optional = false } = {}): Promise<T | null> {
@@ -80,6 +82,9 @@ export const hexToRGB = (hex: string): RGB => {
   return { r: 0, g: 0, b: 0 };
 };
 
+
+export const MASK_INDEX_RE = /(?:^|\/)(?:shape|mask)_(?<index>\d+)\.png$/i;
+
 export class CrownMuralController {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -114,7 +119,7 @@ export class CrownMuralController {
     private unifiedMaskWidth = 0;
   // @ts-ignore
     private unifiedMaskHeight = 0;
-  private unifiedMaskIndex16: Uint16Array | null = null;//region indices per pixel loaded from the unified mask
+  private unifiedMaskIndex32: Uint32Array | null = null;//region indices per pixel loaded from the unified mask
   /**private highlightColors: RGB[] = [];//highlight colors, repeating as needed
   private lastHighlight: { regionIdx: number; pixels: number[] } | null = null;//recorded last highlighted region and pixel offsets
   private currentRegionIndex: number = 0;//curr 1‑based region idx being highlighted
@@ -141,25 +146,36 @@ export class CrownMuralController {
   // Precomputed lookup table for ID decoding
   // @ts-ignore
   //  private readonly idLookup = new Uint32Array(256 * 256 * 256);
-
     private displayIndexByPixelId = new Map<number, number>();
 
 
-    private resizeCanvasesForDPR(w: number, h: number) {
-      const dpr = Math.max(1, window.devicePixelRatio || 1);
-      const set = (c: HTMLCanvasElement, ctx:
-                  CanvasRenderingContext2D, alpha=false) => {
-        c .width  = Math.round(w * dpr);
+  private resizeCanvasesForDPR(w: number, h: number,status: boolean) {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    if (status){
+      // @ts-ignore
+        const set = (c: HTMLCanvasElement, ctx:
+      CanvasRenderingContext2D, alpha=false) => {
+        c.width  = Math.round(w * dpr);
         c.height = Math.round(h * dpr);
         c.style.width  = w + 'px';
         c.style.height = h + 'px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)}
       set(this.canvas,  this.ctx);
       set(this.idCanvas, this.idCtx);
-      set(this.overlay, this.overlayCtx, true)}
+      set(this.overlay, this.overlayCtx, true)}else{
+      // @ts-ignore
+        const set = (c: HTMLCanvasElement, ctx:
+      CanvasRenderingContext2D, alpha=false) => {
+        c .width  = Math.round(w);
+        c.height = Math.round(h);
+        c.style.width  = w + 'px';
+        c.style.height = h + 'px';
+        ctx.setTransform(1, 0, 0, 1, 0, 0)}
+      set(this.canvas,  this.ctx);
+      set(this.idCanvas, this.idCtx);
+      set(this.overlay, this.overlayCtx, true)}}
 
-    constructor(config: ControllerConfig={}) {
-
+  constructor(config: ControllerConfig={}) {
     this.config = config;
     this.canvas = document.getElementById('mural-canvas') as HTMLCanvasElement;
     this.ctx = this.canvas.getContext('2d', {
@@ -194,14 +210,23 @@ export class CrownMuralController {
       this.metadata = metadata!;
 
       const {width, height} = this.metadata!.dimensions;
-      this.resizeCanvasesForDPR(width, height);
-
-      for (const region of metadata.regions) {//load images
-        const m = /(shape|mask)_(\d+)\.png$/i.exec(region.mask);//old mask_(\d+)\
-        if (m) {const iii = parseInt(m[2], 10);
-          this.displayIndexByPixelId.set(region.id, iii);   //pixel-id → unifiedIndex
-          this.regionByShapeIndex.set(iii, region)}         //unifiedIndex → Region
+      this.resizeCanvasesForDPR(width, height, false);
+        /*
+        {
+          "id": unifiedIndex=1,
+          "bbox": {"x": ..., "y": ..., "width": ..., "height": ...},
+          "centroid": {"x": ..., "y": ...},
+          "mask": "shape_000.png"
         }
+         */
+      for (const region of metadata.regions) {//load regionss
+        const mask = MASK_INDEX_RE.exec(pathnameOf(region.mask));
+        if (!mask?.groups?.index) continue;
+        const iii = parseInt(mask.groups.index, 10);
+        this.displayIndexByPixelId.set(region.id, iii);
+        this.regionByShapeIndex.set(iii, region);}
+
+
       if (rawPalette) {
         const normalized = normalizePaletteToRGB(rawPalette);
         this.palette = normalized as Palette;
@@ -219,19 +244,17 @@ export class CrownMuralController {
       this.generateProjectData();
       await Promise.all([
         this.loadBaseImage(),
-        this.loadIDMap(),
+        this.loadColouredMap(),
         this.loadUnifiedMask()
       ]);
-
-
 
 
         //COME BACK HERE
         // Set optimized event handler and hide loading indicator
       this.setupEventHandlers();
       document.getElementById('loading')?.style.setProperty('display', 'none');
-      this.animate(0);}
-    catch (err){
+      this.animate(0);}catch (err){
+        //caught error
       console.error('init Failed: ', err)
       const loading = document.getElementById('loading');
       if (loading) {
@@ -240,9 +263,11 @@ export class CrownMuralController {
       }
     }
   }
+  private tmp?: HTMLCanvasElement;
+  private tmpCtx?: CanvasRenderingContext2D;
 
-  private generateProjectData(): void {
-    if (!this.metadata) return;
+
+  private generateProjectData(): void {if (!this.metadata) return;
 
     const projectTypes: ProjectType[] = [
       { prefix: 'tower-', titles: ['Defence System', 'Watch Tower', 'Guard Post'] },
@@ -322,7 +347,7 @@ export class CrownMuralController {
       return { r: c.r | 0, g: c.g | 0, b: c.b | 0 };
     }
     return this.colorFallback}
-  private async loadUnifiedMAsk1(): Promise<void> {
+  /**private async loadUnifiedMAsk1(): Promise<void> {
     const source = url(this.config.unifiedMaskPath || 'data/shape_masks/unified_mask.png');
     try {
         const res   =   await fetch(source, {cache:'no-store'});
@@ -335,7 +360,7 @@ export class CrownMuralController {
 
         for (let i=0,o=0; i <   count; i++,o+=2)    {
             out[i] =   dView.getUint16(o,true)}
-        this.unifiedMaskIndex16=out;
+        this.unifiedMaskIndex32=out;
         if (!this.metadata) throw new Error('metadata.json not loaded before unified mask');
         this.unifiedMaskHeight  = this.metadata.dimensions.height  | 0;
         this.unifiedMaskWidth  = this.metadata.dimensions.width  | 0;
@@ -346,55 +371,132 @@ export class CrownMuralController {
 
     } catch (err) {console.warn('Unified .u16 mask ' +
         'load failed; no per-pixel indices available:', err)}
-  }
+  }*/
   private async loadUnifiedMask(): Promise<void> {
-    const maskPath = this.config.unifiedMaskPath || 'data/shape_masks/unified_mask.png';
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const off = document.createElement('canvas');
-        off.width = img.width;
-        off.height = img.height;
-        const ctx = off.getContext('2d', { willReadFrequently: true, alpha: false });
-        // @ts-ignore
-          ctx.drawImage(img, 0, 0);
+    const maskPath = this.config.unifiedMaskPath || 'data/shape_masks/unified_mask';
+    if (!this.metadata) {const metaURL = this.config.metadataPath || 'data/metadata.json';
+      const res = await fetch(metaURL, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Failed to load metadata.json (HTTP ${res.status})`);
+      this.metadata = await res.json();}
+    const W = (this.unifiedMaskWidth  = this.metadata!.dimensions.width  | 0);
+    const H = (this.unifiedMaskHeight = this.metadata!.dimensions.height | 0);
+    const N = W * H;
 
-          let id: any;
-          // @ts-ignore
-          id = ctx.getImageData(0, 0, img.width, img.height);
-        const src   =   id.data;
-        const W = id.width, H = id.height;
-        this.unifiedMaskWidth = W;
-        this.unifiedMaskHeight = H;
+    const loadBinary = async (ext: 'u32' | 'u16' | 'u8', expectedBytes: number) => {
+      const urlStr = `${maskPath}.${ext}`;
+      const res = await fetch(urlStr, { cache: 'no-store' });
+      if (!res.ok) return null;
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength !== expectedBytes) {return null;}//size mismatch – treat as not-found and try next
+    return new DataView(buf)} // parse with DataView to control endianness
+    try {
+      let dv: DataView | null = null;
 
+      dv = await loadBinary('u32', N * 4);
+      if (dv) {
+        const out = new Uint32Array(N);
+        for (let i = 0, o = 0; i < N; i++, o += 4) out[i] = dv.getUint32(o, /*littleEndian=*/true);
+        this.unifiedMaskIndex32 = out;
+        return}
 
-        const out = new Uint16Array(W * H);
-        for (let i = 0, p = 0; i < out.length; i++, p += 4) {out[i] = (src[p] | (src[p + 1] << 8)) & 0xffff}
-        this.unifiedMaskIndex16 = out;
-        resolve();
-      };
-      img.onerror = () => {
-        console.warn('Unified mask not found at', maskPath);
-        resolve();
-      };
-      const source = url(maskPath);
-      const sameOrigin = new URL(source, document.baseURI).origin === location.origin;
-      if (!sameOrigin) img.crossOrigin = 'anonymous';
-      img.src = source;
-    });
+      dv = await loadBinary('u16', N * 2);
+      if (dv) {
+        const out = new Uint32Array(N);
+          for (let i = 0, o = 0; i < N; i++, o += 2) out[i] = dv.getUint16(o, /*littleEndian=*/true);
+        this.unifiedMaskIndex32 = out;
+        return}
+
+      dv = await loadBinary('u8', N);
+      if (dv) {
+        const out = new Uint32Array(N);//fast path: bulk view then widen
+        const u8 = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+        for (let i = 0; i < N; i++) out[i] = u8[i];
+        this.unifiedMaskIndex32 = out;
+        return}
+
+      //PNG fallback - reconstruct 32 bits from RGBA
+        await new Promise<void>((resolve) => {
+          const img = new Image();
+          const source = url(`${maskPath}.png`);
+          if (new URL(source, document.baseURI).origin !== location.origin) img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            const off = document.createElement('canvas');
+            off.width = img.width;  off.height = img.height;
+            const ctx = off.getContext('2d', { willReadFrequently: true, alpha: false })!;
+            ctx.drawImage(img, 0, 0);
+            const id = ctx.getImageData(0, 0, img.width, img.height);
+            const W = id.width, H = id.height, src = id.data;
+            this.unifiedMaskWidth = W; this.unifiedMaskHeight = H;
+
+            //NOTE: Grayscale 32-bit becomes 8-bit in canvas; use R channel only (<=255 regions).
+            const out = new Uint32Array(W * H);
+
+            for (let i = 0, p = 0; i < out.length; i++, p += 4) {out[i] = (src[p+3] << 24) |  (src[p+2] << 16) | (src[p+1] << 8)  | src[p];} // R only
+            this.unifiedMaskIndex32 = out;
+            resolve()
+          };
+          img.onerror = () => { console.warn('Unified mask PNG fallback failed'); resolve(); };
+          img.src = source});
+    }catch (err) {console.error('loadUnifiedMask failed:', err);}
   }
 
+    /**
+     * return new Promise((resolve) => {
+     *       const img = new Image();
+     *
+     *       img.decoding  =   'async'
+     *
+     *
+     *       img.onload = async () => {
+     *           //NOSCALING FOR NOW
+     *         const off = document.createElement('canvas');
+     *         off.width = img.width;
+     *         off.height = img.height;
+     *         const ctx = off.getContext('2d', { willReadFrequently: true, alpha: false });
+     *         // @ts-ignore
+     *           ctx.drawImage(img, 0, 0);
+     *         // @ts-ignore
+     *           let imagedata = ctx.getImageData(0, 0, img.width, img.height);
+     *
+     *
+     *         const src   =   imagedata.data;
+     *         const W = imagedata.width, H = imagedata.height;
+     *         this.unifiedMaskWidth = W;
+     *         this.unifiedMaskHeight = H;
+     *
+     *
+     *         const out = new Uint32Array(W * H);
+     *         for (let i = 0, p = 0; i < out.length; i++, p += 4) {
+     *           const r = src[p + 0];
+     *           const g = src[p + 1];
+     *           const b = src[p + 2];
+     *
+     *           out[i] = (r) | (b << 8) | (g << 16)}
+     *         this.unifiedMaskIndex32 = out;
+     *         resolve()}
+     *       img.onerror = () => {
+     *         console.warn('Unified mask not found at', maskPath);
+     *         resolve();
+     *       };
+     *       const source = url(maskPath);
+     *       const sameOrigin = new URL(source, document.baseURI).origin === location.origin;
+     *       if (!sameOrigin) img.crossOrigin = 'anonymous';
+     *       img.src = source;
+     *     })}
+     *   }
+     * @private
+     */
 
-
-  private async loadIDMap(): Promise<void> {
-    const source = url('data/id_map.png');
+  private async loadColouredMap(): Promise<void> {
+    const source = url('data/coloured_map.png');
     const img = new Image();
     img.decoding = 'async';
+
     const sameOrigin = new URL(source, document.baseURI).origin === location.origin;
     if (!sameOrigin) img.crossOrigin = 'anonymous';
 
     img.src = source//safety
-    try{await img.decode()}catch{throw new Error(`Failed to load id_map at ${source}`)}
+    try{await img.decode()}catch{throw new Error(`Failed to load coloured_map at ${source}`)}
 
     //draw to idCanvas then cache ImageData
     this.idCanvas.width = img.width;
@@ -404,40 +506,36 @@ export class CrownMuralController {
 
     if (this.idImageData && this.metadata?.regions?.length) {
       const r0    =   this.metadata.regions[0];
-      const testIdRGB = (() => {
+      const testIdRGBPacked = (() => {
         const x = Math.floor(r0.centroid.x), y = Math.floor(r0.centroid.y);
         const idx = (y * this.idImageData.width + x) * 4, d = this.idImageData.data;
-        return (d[idx] | (d[idx+1] << 8) | (d[idx+2] << 16))})();
-      const testIdBGR = (() => {
-        const x = Math.floor(r0.centroid.x), y = Math.floor(r0.centroid.y);
-        const idx = (y * this.idImageData.width + x) * 4, d = this.idImageData.data;
-        return (d[idx+2] <<16 | (d[idx+1] << 8) | (d[idx]));
-      })();
-      const hasRGB = this.regions.has(testIdRGB);
-      const hasBGR = this.regions.has(testIdBGR);
-      if (hasBGR && !hasRGB) this._decodeOrder = 'bgr';
+        return (d[idx] | (d[idx+1] << 8) | (d[idx+2] << 16) | (d[idx+3] << 24))})();
+      const hasRGB = this.regions.has(testIdRGBPacked);
+
     }
 
 
   }
   //optimized ID reading using cached ImageData
   private readIdAt(clientX: number, clientY: number): number {
-    if (!this.idImageData) return 0;
-    
-    const rect = this.canvas.getBoundingClientRect();
-    const x = Math.floor((clientX - rect.left) * (this.canvas.width / rect.width));
-    const y = Math.floor((clientY - rect.top) * (this.canvas.height / rect.height));
-    
-    // Bounds check
-    if (x < 0 || x >= this.canvas.width || y < 0 || y >= this.canvas.height) {return 0}
-    
-    // Direct array access (much faster than getImageData per pixel)
-    const idx = (y * this.idImageData.width + x) * 4;
-    const data = this.idImageData.data;
+      if (!this.idImageData) return 0;
 
-    if (this._decodeOrder === 'bgr') {return (data[idx + 2] << 16) | (data[idx + 1] << 8) | data[idx]}
-    return (data[idx] | (data[idx + 1] << 8) | (data[idx + 2] << 16))}
-  private _decodeOrder: 'rgb' | 'bgr' = 'rgb';
+      const rect = this.canvas.getBoundingClientRect();
+      const x = Math.floor((clientX - rect.left) * (this.canvas.width / rect.width));
+      const y = Math.floor((clientY - rect.top) * (this.canvas.height / rect.height));
+
+      // Bounds check
+      if (x < 0 || x >= this.canvas.width || y < 0 || y >= this.canvas.height) {
+          return 0
+      }
+
+      // Direct array access (much faster than getImageData per pixel)
+      const idx = (y * this.idImageData.width + x) * 4;
+      const data = this.idImageData.data;
+
+      //return     (data[idx] << 16) | (data[idx + 1] << 8) | data[idx + 2];
+      return     (data[idx+2] << 16) | (data[idx + 1] << 8) | data[idx];
+  }
 
   private setupEventHandlers(): void {
     // Use passive listeners for better scrolling performance
@@ -496,7 +594,7 @@ export class CrownMuralController {
 
   private maskCanvasCache = new Map<number, HTMLCanvasElement>();
   private async loadMaskImage(unifiedIndex: number): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const img = new Image();
       img.decoding = 'async';
       img.onload = () => resolve(img);
@@ -509,31 +607,44 @@ export class CrownMuralController {
   }
 
 
+  private maskCanvasPromiseCache    =   new Map<number,Promise<HTMLCanvasElement>>();
+  private maskCanvasPending = new Map<number, Promise<HTMLCanvasElement>>();
 
-  private async ensureMaskCanvas(unifiedIndex: number): Promise<HTMLCanvasElement | null> {
-    if (!this.unifiedMaskIndex16 || unifiedIndex <= 0) return null; // mask indices are 0-based; but region id 0 is background
-    if (unifiedIndex === this.maskBackgroundIndex || unifiedIndex === this.paletteBackgroundIndex) return null;
+  //takes in 1 index and conv to 0-based index shapeIndex
+    // but unifiedIndex is 1-based
+  private ensureMaskCanvas(unifiedIndex: number): HTMLCanvasElement | null {
+    if (!this.unifiedMaskIndex32 || unifiedIndex <= 0) return null; // mask indices are 0-based; but region id 0 is background
+    if (unifiedIndex === this.maskBackgroundIndex ||
+        unifiedIndex === this.paletteBackgroundIndex) return null;
 
-    let c = this.maskCanvasCache.get(unifiedIndex);
-    if (c) return c;
+    let canvas = this.maskCanvasCache.get(unifiedIndex);
+    if (canvas) return canvas;
 
-    const img = await this.loadMaskImage(unifiedIndex);
-    c = document.createElement('canvas');
-    c.width = img.width;
-    c.height = img.height;
-    const cctx = c.getContext('2d', { alpha: true })!;
+    const unifiedWidth = this.unifiedMaskWidth | 0;
+    const unifiedHeight = this.unifiedMaskHeight | 0;
+
+    canvas  =   document.createElement('canvas');
+
+    canvas.width = unifiedWidth;
+    canvas.height = unifiedHeight;
+    //const shapeIndex  =   unifiedIndex-1;
+    //const img = await this.loadMaskImage(shapeIndex);
+    const cctx = canvas.getContext('2d', { alpha: true })!;
+    const img   =   cctx.createImageData(unifiedWidth,unifiedHeight);
     //draw mask as alpha: assume mask png is white-on-black turn white to opaque
-    cctx.drawImage(img, 0, 0);
-    const id = cctx.getImageData(0, 0, c.width, c.height);
-    const data = id.data;
+    //cctx.drawImage(img, 0, 0);
+    //const id = cctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = img.data;
+    const source    =   this.unifiedMaskIndex32;
     //treat any nonzero as part of mask put in alpha channel
-    for (let i = 0; i < data.length; i += 4) {const v = data[i] | data[i+1] | data[i+2];
+    for (let i = 0; i < data.length; i += 4) {
+      const v = data[i] | data[i+1] | data[i+2];
       data[i] = data[i+1] = data[i+2] = 255;  //draw highlight color later via globalCompositeOperation
       data[i+3] = v ? 255 : 0}              //alpha
-
+    //RETURN HERE
     cctx.putImageData(id, 0, 0);
-    this.maskCanvasCache.set(unifiedIndex, c);
-    return c}
+    this.maskCanvasCache.set(unifiedIndex, canvas);
+    return canvas}
   private lastRequestedHighlight = 0;
   private async compositeHighlight(unifiedIndex: number): Promise<void> {
     const requestId = ++this.lastRequestedHighlight;
@@ -575,24 +686,29 @@ export class CrownMuralController {
       : { x: 0, y: 0, width: this.canvas.width, height: this.canvas.height };
     this.needsRedraw = true}
   private clearOverlay() {this.overlayCtx.clearRect(0, 0, this.overlay.width, this.overlay.height)}
+
+
   private async drawComposite(regionIds: number[]) {
     if (!regionIds?.length) { this.clearOverlay(); return; }
-
+    const ctx   =   this.overlayCtx;
+    this.clearOverlay();
+    ctx.globalCompositeOperation    =   "source-over";
+    const maskColl    =   [];
     //resolve -> mask indices (0-based iii)
-    const masks = [];
-    for (const id of regionIds) {
-      if (id <= 0) continue; // skip background
-      const iii = this.displayIndexByPixelId.get(id);
-      if (iii == null) continue;
-      const c = await this.ensureMaskCanvas(iii);
-      if (c) masks.push(c);
+
+    for (const unifiedIndex of regionIds) {
+      if (unifiedIndex <= 0) continue; // skip background
+      const mask = this.displayIndexByPixelId.get(unifiedIndex);
+      if (mask == null) continue;
+      const c = await this.ensureMaskCanvas(mask);
+      if (c) maskColl.push(c);
     }
     const ctx = this.overlayCtx;
     this.clearOverlay();
     ctx.globalCompositeOperation = 'source-over';
     // Optional: tint color per region via palette.json
-    for (let i = 0; i < masks.length; i++) {ctx.globalAlpha = 0.25; //soft composite
-      ctx.drawImage(masks[i], 0, 0)}
+    for (let i = 0; i < maskColl.length; i++) {ctx.globalAlpha = 0.25; //soft composite
+      ctx.drawImage(maskColl[i], 0, 0)}
     ctx.globalAlpha = 1;
   }
 
