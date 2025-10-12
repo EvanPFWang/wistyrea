@@ -64,6 +64,10 @@ export interface ControllerConfig {
   dataPath?: string;
   enableDebug?: boolean;
   maxFPS?: number;
+  metadataPath?: string;
   unifiedMaskPath?: string;
+  colouredMaskPath?: string;
+  storagePath?: string;
+  idMapPath?: string;
   maskBackgroundIndex?: number;
   baseImagePath?: string}
