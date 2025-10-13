@@ -1,6 +1,6 @@
 // src/CrownMuralController.ts
-import {RGB, Hex, Palette, Metadata,Region, ProjectType, ControllerConfig} from "./types.ts";
-//import {l} from "vite/dist/node/types.d-aGj9QkWt";
+import {RGB, Hex, Palette, Metadata,Region, ProjectType, ControllerConfig} from './types.ts';
+//import {l} from 'vite/dist/node/types.d-aGj9QkWt';
 //import basePngUrl from '/Mural_Crown_of_Italian_City.svg.png?url';
 const RAW_BASE = import.meta.env.BASE_URL ?? '/';
 const BASE     = RAW_BASE.endsWith('/') ? RAW_BASE : RAW_BASE + '/';
@@ -85,6 +85,36 @@ export const hexToRGB = (hex: string): RGB => {
 
 export const MASK_INDEX_RE = /(?:^|\/)(?:shape|mask)_(?<index>\d+)\.png$/i;
 
+
+type ResolvedConfig = Required<
+  Pick<
+    ControllerConfig, 'dataPath'|'enableDebug'|'maxFPS'|'maskBackgroundIndex'>
+  > & Omit<
+    ControllerConfig, 'dataPath'|'enableDebug'|'maxFPS'|'maskBackgroundIndex'
+> & {metadataPath: string;
+  unifiedMaskPath: string;
+  colouredMaskPath: string;
+  idMapPath: string;
+  storagePath: string;
+  baseImagePath: string;
+  palettePath: string};
+
+const DEFAULTS: ResolvedConfig = {
+  dataPath: 'data',
+  enableDebug: false,
+  maxFPS: 60,
+  maskBackgroundIndex: 0,
+
+  metadataPath: 'data/metadata.json',
+  unifiedMaskPath: 'data/shape_masks/unified_mask',
+  colouredMaskPath: 'data/coloured_map.png',
+  idMapPath: 'data/id_map.png',
+  storagePath: 'data/shape_masks',
+  baseImagePath: 'Mural_Crown_of_Italian_City.svg.png',
+  palettePath: 'data/palette.json',
+};
+
+
 export class CrownMuralController {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -93,7 +123,7 @@ export class CrownMuralController {
   private tooltip: HTMLDivElement;
   private tooltipTitle: HTMLElement;
   private tooltipBlurb: HTMLElement;
-  private config;
+  private config: ResolvedConfig;
   // Performance optimizations
   private regions: Map<number, Region> = new Map();
   private hoveredRegion: number | null = null;
@@ -176,7 +206,18 @@ export class CrownMuralController {
       set(this.overlay, this.overlayCtx, true)}}
 
   constructor(config: ControllerConfig={}) {
-    this.config = config;
+    const dp    =   config.dataPath ??  DEFAULTS.dataPath;
+    this.config = {
+      ...DEFAULTS,
+      ...config,
+      metadataPath:     config.metadataPath     ?? `${dp}/metadata.json`,
+      unifiedMaskPath:  config.unifiedMaskPath  ?? `${dp}/shape_masks/unified_mask`,
+      colouredMaskPath: config.colouredMaskPath ?? `${dp}/coloured_map.png`,
+      idMapPath:        config.idMapPath        ?? `${dp}/id_map.png`,
+      storagePath:      config.storagePath      ?? `${dp}/shape_masks`,
+      palettePath:      config.palettePath      ?? `${dp}/palette.json`,
+      baseImagePath:    config.baseImagePath    ?? DEFAULTS.baseImagePath,
+    };
     this.canvas = document.getElementById('mural-canvas') as HTMLCanvasElement;
     this.ctx = this.canvas.getContext('2d', {
       alpha: false,
@@ -692,7 +733,7 @@ export class CrownMuralController {
     if (!regionIds?.length) { this.clearOverlay(); return; }
     const ctx   =   this.overlayCtx;
     this.clearOverlay();
-    ctx.globalCompositeOperation    =   "source-over";
+    ctx.globalCompositeOperation    =  'source-over';
     const maskColl    =   [];
     //resolve -> mask indices (0-based iii)
 
