@@ -342,7 +342,7 @@ def draw_overlay(img_bgr: np.ndarray, contours: List[np.ndarray],
     overlay = img_bgr.copy()
     cv.drawContours(overlay, contours, -1, colour, thick, lineType=cv.LINE_AA)
     return overlay
-x
+
 #---------- ID map and metadata exporters ----------
 
 def export_background_and_idmap(
