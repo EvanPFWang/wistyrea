@@ -172,10 +172,10 @@ def _draw_subtree_gray(
             thickness=-1,
             lineType=line_type,
         )
-        child = hier[i, 2]
+        child = hier[i, 2]#child = hier[0, i, 2] if hier.ndim > 1 else hier[i, 2]
         while child != -1:
             stack.append((child, depth + 1))
-            child = hier[child, 0]
+            child = hier[child, 0]#child = hier[0, child, 0] if hier.ndim > 1 else hier[child, 0]
 
 
 def _draw_subtree_colour(
@@ -291,26 +291,49 @@ def export_shape_masks(
     return saved, mapping_dict, idxs
 
 def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
-                     shape_hw: Tuple[int,int],
+                     shape_hw: Tuple[int,int],mapping,#mapping is a dict for the contours to their new indexes to be colorized in
                      palette: Optional[List[Tuple[int,int,int]]] = None) -> np.ndarray:
     h, w = shape_hw
     colour_map = np.zeros((h, w, 3), np.uint8)
 
     #determine top-level shapes in a stable order
-    top = _stable_top_level_indices(hier, contours,shape_hw)
+    top,mapping_Dict = _stable_top_level_indices(hier, contours,shape_hw,return_mapping=True)
     n = len(top)
+    if mapping is None:
+        #if no palette supplied, fall back to random
+        if palette is None or len(palette) < n:
+            if palette is None: palette = []
+            needed = n - len(palette)
+            rng = np.random.default_rng(42)
+            palette += [tuple(int(x) for x in rng.integers(64, 256, size=3)) for _ in range(needed)]  #RGB
+        palette_bgr = [(r2, g2, b2)[::-1] for (r2, g2, b2) in palette]
+        #draw each top-level with its colour; holes are black
+        for j, i in enumerate(top):
+            _draw_subtree_colour(colour_map, contours, hier, i, root_colour=palette_bgr[j], hole_colour=(0,0,0))#draws with bgr palette
+        return colour_map, palette_bgr#colour_map is palette but cnetroid ordered
+    else:
+        n = int(max(mapping.values()))
+        if palette is None  or  len(palette) < n:
+            if palette is None or len(palette) < n:
+                if palette is None: palette = []
+                needed = n - len(palette)
+                rng = np.random.default_rng(42)
+                palette += [tuple(int(x) for x in rng.integers(64, 256, size=3)) for _ in range(needed)]  # RGB
+        palette_bgr: List[Tuple[int, int, int]] = [(b, g, r) for (r, g, b) in palette[:n]]
+        #palette_rgb: List[Tuple[int, int, int]] = [(r, g, b) for (r, g, b) in palette[:n]]
+    ordered_contours: List[Optional[int]] = [None] * n
+    for orig_idx, new_id in mapping.items():
+        if 1 <= new_id <= n:
+            ordered_contours[new_id - 1] = orig_idx
 
-    #if no palette supplied, fall back to random
-    if palette is None or len(palette) < n:
-        if palette is None: palette = []
-        needed = n - len(palette)
-        rng = np.random.default_rng(42)
-        palette += [tuple(int(x) for x in rng.integers(64, 256, size=3)) for _ in range(needed)]  #RGB
-    palette_bgr = [(r2, g2, b2)[::-1] for (r2, g2, b2) in palette]
-    #draw each top-level with its colour; holes are black
-    for j, i in enumerate(top):
-        _draw_subtree_colour(colour_map, contours, hier, i, root_colour=palette_bgr[j], hole_colour=(0,0,0))#draws with bgr palette
-    return colour_map, palette_bgr#colour_map is palette but cnetroid ordered
+    for j, orig_idx in enumerate(ordered_contours, start=1):
+        if orig_idx is None:
+            continue  # unmapped id (gap); skip safely
+        _draw_subtree_colour(colour_map,contours,hier, orig_idx,
+                             root_colour=palette_bgr[j-1], hole_colour=(0, 0, 0),
+                             line_type=cv.LINE_AA,)# or LINE_8 if you need crisp edges
+        #COME BACK HERE to check for rgb or bgr
+    return colour_map,palette_bgr
     #conv to rgb @savetime
 
 
@@ -319,7 +342,7 @@ def draw_overlay(img_bgr: np.ndarray, contours: List[np.ndarray],
     overlay = img_bgr.copy()
     cv.drawContours(overlay, contours, -1, colour, thick, lineType=cv.LINE_AA)
     return overlay
-
+x
 #---------- ID map and metadata exporters ----------
 
 def export_background_and_idmap(
@@ -346,7 +369,7 @@ def export_background_and_idmap(
     Returns the total number of top‑level regions.
     """
     h, w = shape_hw
-    bg = np.full((h, w), 255, np.uint8)
+    bg = np.full((h, w), 1, np.uint8)
     id_map_rgba = np.zeros((h, w, 4), np.uint8)
     #top = _stable_top_level_indices(hier, contours)
     for j, i in enumerate(idxs, start=1):
@@ -376,6 +399,7 @@ def export_metadata(
     contours: List[np.ndarray],
     hier: np.ndarray,
     shape_hw: Tuple[int, int],
+        mapping_dict,
     *,
     out_json: str = "metadata.json",
     masks_dir: str = "shape_masks",
@@ -405,7 +429,7 @@ def export_metadata(
     corresponding binary mask file within "masks_dir".
     """
     h, w = shape_hw
-    top = _stable_top_level_indices(hier, contours)
+    top = _stable_top_level_indices(hier, contours, shape_hw,return_mapping=True)
     regions = []
     for j, i in enumerate(top, start=1):
         #generate binary mask for bbox and centroid calculation
@@ -443,6 +467,7 @@ def export_metadata(
         "total_regions": len(regions),
         "background_id": 0,
         "regions": regions,
+        "mapping_centroid_ordering":mapping_dict
     }
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
@@ -665,7 +690,7 @@ def process_image(
         mask_mode=mask_mode,
     )
 
-    colour_map_bgr,palette_bgr   =   colorize_regions(contours, hierarchy, filled.shape, palette=palette)
+    colour_map_bgr,palette_bgr   =   colorize_regions(contours, hierarchy, filled.shape,ordered_palette_to_centroid_ordering_dict, palette=palette)
     colour_map_rgb = cv.cvtColor(colour_map_bgr, cv.COLOR_BGR2RGB)
     overlay   = draw_overlay(img, contours, color=(0,255,0), thick=2)
 
@@ -717,6 +742,7 @@ def process_image(
         contours,
         hierarchy,
         filled.shape,
+        ordered_palette_to_centroid_ordering_dict,
         out_json=str(data_dir / "metadata.json"),
         masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),)
     #If palette is defined, persist it so the web app can use the same colours
