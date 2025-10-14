@@ -136,6 +136,8 @@ export class CrownMuralController {
   private palette: Palette | null = null;
   private baseImage: HTMLImageElement | null = null;
   private idImageData: ImageData | null = null;
+  private colourImageData: ImageData | null = null;
+  private colourRGB32;//set by loadColouredMap
 
 
   private backgroundId: number = 0;
@@ -389,6 +391,7 @@ export class CrownMuralController {
     }
     return this.colorFallback}
   /**private async loadUnifiedMAsk1(): Promise<void> {
+   *
     const source = url(this.config.unifiedMaskPath || 'data/shape_masks/unified_mask.png');
     try {
         const res   =   await fetch(source, {cache:'no-store'});
@@ -414,6 +417,7 @@ export class CrownMuralController {
         'load failed; no per-pixel indices available:', err)}
   }*/
   private async loadUnifiedMask(): Promise<void> {
+      //fills this.unifiedMaskIndex32, this.unifiedMaskWidth, this.unifiedMaskHeight
     const maskPath = this.config.unifiedMaskPath || 'data/shape_masks/unified_mask';
     if (!this.metadata) {const metaURL = this.config.metadataPath || 'data/metadata.json';
       const res = await fetch(metaURL, { cache: 'no-store' });
@@ -479,7 +483,7 @@ export class CrownMuralController {
           img.onerror = () => { console.warn('Unified mask PNG fallback failed'); resolve(); };
           img.src = source});
     }catch (err) {console.error('loadUnifiedMask failed:', err);}
-  }
+  };
 
     /**
      * return new Promise((resolve) => {
@@ -529,32 +533,47 @@ export class CrownMuralController {
      */
 
   private async loadColouredMap(): Promise<void> {
-    const source = url('data/coloured_map.png');
-    const img = new Image();
+    const source = url(this.config.colouredMaskPath ||  'data/coloured_map.png');
+    if (this.metadata){const metaURL = this.config.metadataPath || 'data/metadata.json';
+      const res = await fetch(metaURL, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Failed to load metadata.json (HTTP ${res.status})`);
+      this.metadata = await res.json();
+    }
+    const expW = this.metadata!.dimensions.width  | 0;
+    const expH = this.metadata!.dimensions.height | 0;
+    const img = new Image();//load&decode png
     img.decoding = 'async';
 
     const sameOrigin = new URL(source, document.baseURI).origin === location.origin;
     if (!sameOrigin) img.crossOrigin = 'anonymous';
 
     img.src = source//safety
-    try{await img.decode()}catch{throw new Error(`Failed to load coloured_map at ${source}`)}
+    try{await img.decode()}catch{throw new Error(`Failed to load coloured_map at ${source}`);}
 
     //draw to idCanvas then cache ImageData
     this.idCanvas.width = img.width;
     this.idCanvas.height = img.height;
-    this.idCtx.drawImage(img, 0, 0);
-    this.idImageData = this.idCtx.getImageData(0, 0, this.idCanvas.width, this.idCanvas.height);
 
-    if (this.idImageData && this.metadata?.regions?.length) {
+    const ctx   =   this.idCtx;//use prexisting
+    ctx.drawImage(img, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, this.idCanvas.width, this.idCanvas.height);
+    this.unifiedMaskWidth   =   imageData.width; this.unifiedMaskHeight=imageData.height;
+
+    const src   =   imageData.data
+        const N =   (src.length>>>2);
+    const rgb32 =   new Uint32Array(N)
+    for (let i = 0, o = 0; i < N; i++, o += 4) {rgb32[i] = (src[o] | (src[o+1] << 8) | (src[o+2] << 16)) >>> 0};
+    /*if (this.idImageData && this.metadata?.regions?.length) {
       const r0    =   this.metadata.regions[0];
       const testIdRGBPacked = (() => {
         const x = Math.floor(r0.centroid.x), y = Math.floor(r0.centroid.y);
         const idx = (y * this.idImageData.width + x) * 4, d = this.idImageData.data;
         return (d[idx] | (d[idx+1] << 8) | (d[idx+2] << 16) | (d[idx+3] << 24))})();
-      const hasRGB = this.regions.has(testIdRGBPacked);
-
-    }
-
+    }*/
+      this.colourRGB32=rgb32;
+      this.colourImageData   = imageData;//COME BACK HERE
+      if (expW && expH && (expW !== imageData.width || expH !== imageData.height)) {console.warn(`[coloured_map.png] size mismatch: got ${imageData.width}×${imageData.height}, expected ${expW}×${expH}`);}
 
   }
   //optimized ID reading using cached ImageData
