@@ -578,7 +578,7 @@ export class CrownMuralController {
   }
   //optimized ID reading using cached ImageData
   private readIdAt(clientX: number, clientY: number): number {
-      if (!this.idImageData) return 0;
+      if (!this.idImageData) return 0;//check the id at that pixel - unified or the other?
 
       const rect = this.canvas.getBoundingClientRect();
       const x = Math.floor((clientX - rect.left) * (this.canvas.width / rect.width));
@@ -702,7 +702,7 @@ export class CrownMuralController {
       data[i] = data[i+1] = data[i+2] = 255;  //draw highlight color later via globalCompositeOperation
       data[i+3] = v ? 255 : 0}              //alpha
     //RETURN HERE
-    cctx.putImageData(id, 0, 0);
+    cctx.putImageData(img, 0, 0);//cctx.putImageData(data, 0, 0)
     this.maskCanvasCache.set(unifiedIndex, canvas);
     return canvas}
   private lastRequestedHighlight = 0;
