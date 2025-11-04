@@ -1,4 +1,129 @@
+def export_metadata(
+    contours: List[np.ndarray],
+    hier: np.ndarray,
+    shape_hw: Tuple[int, int],
+        mapping_dict,
+    *,
+    out_json: str = "metadata.json",
+    masks_dir: str = "shape_masks",
+) -> None:
+    """
+    Write a JSON file describing each region.  The structure is:
+
+    "`json
+    {
+      "version": "1.0",
+      "dimensions": {"width": W, "height": H},
+      "total_regions": N,
+      "background_id": 0,
+      "regions": [
+        {
+          "id": 1,
+          "bbox": {"x": ..., "y": ..., "width": ..., "height": ...},
+          "centroid": {"x": ..., "y": ...},
+          "mask": "shape_000.png"
+        },
+        ...
+      ]
+    }
+    "`
+    The region ids correspond to the order produced by
+    "_stable_top_level_indices()".  The "mask" field points to the
+    corresponding binary mask file within "masks_dir".
+    """
+    h, w = shape_hw
+    top,mapping_dict = _stable_top_level_indices(hier, contours, shape_hw,return_mapping=True)
+    regions = []
+    for j, i in enumerate(top, start=1):
+        #generate binary mask for bbox and centroid calculation
+        m = np.zeros((h, w), np.uint8)
+        _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
+        #bounding box
+        ys, xs = np.where(m > 0)
+        if xs.size > 0:
+            x0, x1 = int(xs.min()), int(xs.max())
+            y0, y1 = int(ys.min()), int(ys.max())
+            bbox = {
+                "x": x0,
+                "y": y0,
+                "width": x1 - x0 + 1,
+                "height": y1 - y0 + 1,
+            }
+        else:
+            bbox = {"x": 0, "y": 0, "width": 0, "height": 0}
+        #centroid (geometric center of mask)
+        M = cv.moments(m, binaryImage=True)
+        cx = float(M["m10"] / (M["m00"] + 1e-9))
+        cy = float(M["m01"] / (M["m00"] + 1e-9))
+        regions.append(
+            {
+                "id": j,
+                "bbox": bbox,
+                "centroid": {"x": cx, "y": cy},
+                "mask": f"{masks_dir}/shape_{(j-1):03d}.png",
+            }
+        )
+    meta = {
+        "version": "1.0",
+        "dimensions": {"width": w, "height": h},
+        "total_regions": len(regions),
+        "background_id": 0,
+        "regions": regions,
+        "mapping_centroid_ordering":mapping_dict
+    }
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
+
+def export_palette_json(
+    palette: List[Tuple[int, int, int]],
+        colourmap,
+    *,
+    out_json: str = "palette.json",#this will be in bgra
+
+    mapping_dict:  Optional[Dict[int, int]] = None,
+    palette_keys: Optional[Sequence[int]] = None,  # when palette is keyed by orig_idx, pass that list here
+) -> None:
+    """
+    palette keyed by new_id (default): palette[j-1] is colour for region id j.
+    palette keyed by orig_idx: pass `palette_keys` (a sequence of original contour indices in palette order)
+        and `mapping_dict={orig_idx->new_id}`; we'll remap to new ids.
+
+    corresponds to region id "j".  DOESNT DO THIS ```OpenCV uses BGR ordering, so convert
+    back to RGB for the JSON file```.
+    region ids 1-based and colors RGB triplets.
+    """
+    out_colourMap: str = "colourmap.json"
+    #takes in rgb palette
+    #Map id -> colour (in RGB)
+    #[POST - HELLO CHECK to see if indexes
+
+    if palette_keys is None:
+        # Palette already in new-id order (1..N)
+        new_to_rgb = {j: {"r": int(r), "g": int(g), "b": int(b)}
+                      for j, (r, g, b) in enumerate(palette, start=1)}
+    else:
+        if mapping_dict is None:
+            raise ValueError("palette_keys provided but mapping_dict is None")
+        if len(palette_keys) != len(palette):
+            raise ValueError("palette_keys and palette must have same length")
+        new_to_rgb = {}
+        for (orig_idx, (r, g, b)) in zip(palette_keys, palette):
+            new_id = mapping_dict.get(orig_idx)
+            if new_id is None:
+                #skip or raise; choose raise for early surfacing of mismatches
+                raise KeyError(f"orig_idx {orig_idx} missing in mapping_dict")
+            new_to_rgb[int(new_id)] = {"r": int(r), "g": int(g), "b": int(b)}
+
+    data = {"background_id": 0, "map": new_to_rgb}
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    #keep colourmap sidecar
+    with open("colourmap.json", "w", encoding="utf-8") as f:
+        json.dump(colourmap, f, ensure_ascii=False, indent=2)
 #python regions.py "C:\Users\User\Documents\GitHub\wistyrea\Mural_Crown_of_Italian_City.svg.png"   --blur 1 --close 1 --min_area 5 --canny_sigma 0.25 --mask_mode "all" --palette_mode kbatch --sample_step 7
+
+#python regions.py "Mural_Crown_of_Italian_City.svg.png"   --blur 1 --close 1 --min_area 20 --canny_sigma 0.25 --palette_mode kbatch --sample_step 7 --debug
 
 """Canny sigma:--canny_sigma 0.25 is a good start for clear line art; 0.33–0.5 for softer edges. (auto-thresholding strategy is solid; it’s common practice.)
 
@@ -20,24 +145,22 @@ Sources
 
 
 """
-#python regions.py "Mural_Crown_of_Italian_City.svg.png"   --blur 1 --close 1 --min_area 20 --canny_sigma 0.25 --palette_mode kbatch --sample_step 7 --debug
-
 from __future__ import annotations
 import os, sys, glob
 from pathlib import Path
-from typing import List, Tuple, Optional, Sequence, Dict, Union
 
+from typing import List, Tuple, Optional, Sequence, Dict, Union
 import cv2 as cv
 import numpy as np
+
 import json
 
-from scipy.stats import alpha
 
+from scipy.stats import alpha
 
 def _repo_root_from_this_file() -> Path:
     #assumes this file lives at repo_root/scripts/regions.py (adjust .. count if needed)
     return Path(__file__).resolve().parents[1]
-
 def _abs_out(p: Union[str, Path], base: Path) -> Path:
     """
     If p is absolute (or drive-rooted on Windows like '\\foo'), use it as-is,
@@ -45,11 +168,13 @@ def _abs_out(p: Union[str, Path], base: Path) -> Path:
     """
     p = Path(p)
     return p if p.is_absolute() else (base / p)
+
 def to_rgba(img_bgr: np.ndarray) -> np.ndarray:
     return cv.cvtColor(img_bgr,  cv.COLOR_BGRA2RGBA)
 
 def to_bgra(img_rgb: np.ndarray) -> np.ndarray:
     return cv.cvtColor(img_rgb, cv.COLOR_RGBA2BGRA)
+
 
 def auto_canny(gray: np.ndarray, sigma: float = 0.33,
                aperture_size: int = 3, L2: bool = True) -> np.ndarray:
@@ -57,7 +182,6 @@ def auto_canny(gray: np.ndarray, sigma: float = 0.33,
     lo = int(max(0, (1.0 - sigma) * v))
     hi = int(min(255, (1.0 + sigma) * v))
     return cv.Canny(gray, lo, hi, apertureSize=aperture_size, L2gradient=L2)
-
 
 def close_gaps(edges: np.ndarray, ksize: int = 3,
                shape: int = cv.MORPH_ELLIPSE, iters: int = 1) -> np.ndarray:
@@ -79,6 +203,7 @@ def _depth(idx: int, hier: np.ndarray) -> int:
         parent = hier[parent, 3]
     return d
 
+
 def _find_border_seed(blockers01: np.ndarray) -> Tuple[int, int]:
     """Return a background pixel on the border; fallback (0,0)."""
     h, w = blockers01.shape
@@ -90,6 +215,8 @@ def _find_border_seed(blockers01: np.ndarray) -> Tuple[int, int]:
         if blockers01[y, w-1] == 0: return (w-1, y)
     return (0, 0)
 
+
+#---------- Contours + hierarchy ----------
 
 def fill_regions_from_edges(edges: np.ndarray, seed: Optional[Tuple[int,int]] = None) -> np.ndarray:
     """Return uint8 {0,255} of interior regions delimited by edges (treated as barriers)."""
@@ -117,7 +244,7 @@ def fill_regions_from_edges(edges: np.ndarray, seed: Optional[Tuple[int,int]] = 
     return inside
 
 
-#---------- Contours + hierarchy ----------
+#---------- Drawing helpers ----------
 
 def find_contours_tree(filled: np.ndarray, min_area: int = 150) -> Tuple[List[np.ndarray], np.ndarray]:
     cnts, hier = cv.findContours(filled, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
@@ -141,8 +268,6 @@ def find_contours_tree(filled: np.ndarray, min_area: int = 150) -> Tuple[List[np
         new_h[new_i, 3] = idx_map.get(par, -1)
     return keep, new_h
 
-
-#---------- Drawing helpers ----------
 
 def _draw_subtree_gray(
     mask: np.ndarray,
@@ -210,7 +335,6 @@ def _draw_subtree_colour(
             stack.append((child, depth + 1))
             child = hier[child, 0]
 
-
 def export_shape_masks(
     contours: List[np.ndarray],
     hier: np.ndarray,
@@ -219,7 +343,7 @@ def export_shape_masks(
     mask_mode: str = "top",
 ) -> Tuple[List[Path], Dict[int, int], List[int]]:
     """
-    Export binary masks for contours.  mask_mode controls which contours are saved:
+    Export binary masks for contours.  mask_mode controls which 0-based contours are saved:
       "top": only top‑level contours (current behaviour)
       "even": only even‑depth contours (filled interiors, holes skipped)
       "all": every contour, including holes
@@ -255,7 +379,7 @@ def export_shape_masks(
 
     cx0 = (w - 1) / 2.0;cy0 = (h - 1) / 2.0;d = np.hypot(cx - cx0, cy - cy0)
     sort_order = np.argsort(d,kind="stable")
-    sorted_original_idxs = original_idxs[sort_order]#for stable sorting based on multiple keys, np.lexsort is the right tool.
+    sorted_original_idxs = original_idxs[sort_order]#for stable sorting based on multiple keys, np.lexsort is the right tool
 
     idxs    =   np.array(idxs).tolist()
     mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(sorted_original_idxs, start=1)}
@@ -264,12 +388,12 @@ def export_shape_masks(
     dtype   =   np.uint32 if len(idxs)>=256*256 else dtype
     unified =   np.zeros((h, w), dtype=dtype)
     bit_count_str   =   str(dtype)[3:]#"8","16","32"
-    for j, i in enumerate(idxs, start=1):
+    for j, i in enumerate(sorted_original_idxs, start=1):#1 based new idxs
         m = np.zeros((h, w), np.uint8)
         draw(m, i)  # draw the j‑th contour into m
         unified[m > 0] = j  # paint region ID into the unified mask
 
-        # save individual mask maybe convert this part to 1-based
+        # save individual mask
         p = out_dir / f"shape_{(j-1):03d}.png"
         cv.imwrite(str(p), m)
         saved.append(p)
@@ -288,7 +412,8 @@ def export_shape_masks(
     with open(out_dir / f"unified_mask.u{bit_count_str}", "wb") as f:
         f.write(raw.tobytes())
     # return masks, mapping (orig_idx -> 1-based id), and the sorted contour indices
-    return saved, mapping_dict, idxs
+    return saved, mapping_dict, idxs# new, conv, old
+
 
 def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
                      shape_hw: Tuple[int,int],mapping,#mapping is a dict for the contours to their new indexes to be colorized in
@@ -336,189 +461,13 @@ def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
     return colour_map,palette_bgr
     #conv to rgb @savetime
 
+#---------- ID map and metadata exporters ----------
 
 def draw_overlay(img_bgr: np.ndarray, contours: List[np.ndarray],
                  colour=(0,255,0), thick=2) -> np.ndarray:
     overlay = img_bgr.copy()
     cv.drawContours(overlay, contours, -1, colour, thick, lineType=cv.LINE_AA)
     return overlay
-
-#---------- ID map and metadata exporters ----------
-
-def export_background_and_idmap(
-    contours: List[np.ndarray],
-    hier: np.ndarray,
-    shape_hw: Tuple[int, int],
-    mapping_dict: Dict[int, int],
-    idxs: List[int],
-    *,
-    out_bg: str = "\public\data\mask_background.png",
-    out_idmap: str = "\public\data\id_map.png",
-) -> int:
-    """
-    Generate two raster outputs: "mask_background.png" and "id_map.png".
-    * "mask_background.png" is a single‑channel image where all pixels
-      belonging to any region are 0 and the background is 255.  This
-      simplifies background detection on the front end.
-    * "id_map.png" encodes the region id in the three RGB channels.  The
-      encoding uses a 24‑bit integer: "R = (id >> 16) & 255",
-      "G = (id >> 8) & 255", "B = id & 255".  Region ids start at
-      1; id 0 represents background.  Use "cv.LINE_8" when drawing
-      to avoid anti‑aliased edges.
-
-    Returns the total number of top‑level regions.
-    """
-    h, w = shape_hw
-    bg = np.full((h, w), 1, np.uint8)
-    id_map_rgba = np.zeros((h, w, 4), np.uint8)
-    #top = _stable_top_level_indices(hier, contours)
-    for j, i in enumerate(idxs, start=1):
-        #create temp mask for region i
-        m = np.zeros((h, w), np.uint8)
-        _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
-        #encode j into B,G,R (OpenCV uses BGR ordering)
-        select = m > 0
-        bg[select] = 0
-
-        # pack j into (R,G,B) so id = R + (G<<8) + (B<<16)
-        R =  (j       ) & 0xFF
-        G =  (j >> 8  ) & 0xFF
-        B =  (j >> 16 ) & 0xFF
-        alpha   =   (j >> 24 ) & 0xFF
-
-        id_map_rgba[select, 0] = R
-        id_map_rgba[select, 1] = G
-        id_map_rgba[select, 2] = B
-        id_map_rgba[select, 3] = alpha
-    cv.imwrite(out_bg, bg)
-    cv.imwrite(out_idmap, to_bgra(id_map_rgba))
-    return idxs
-
-
-def export_metadata(
-    contours: List[np.ndarray],
-    hier: np.ndarray,
-    shape_hw: Tuple[int, int],
-        mapping_dict,
-    *,
-    out_json: str = "metadata.json",
-    masks_dir: str = "shape_masks",
-) -> None:
-    """
-    Write a JSON file describing each region.  The structure is:
-
-    "`json
-    {
-      "version": "1.0",
-      "dimensions": {"width": W, "height": H},
-      "total_regions": N,
-      "background_id": 0,
-      "regions": [
-        {
-          "id": 1,
-          "bbox": {"x": ..., "y": ..., "width": ..., "height": ...},
-          "centroid": {"x": ..., "y": ...},
-          "mask": "shape_000.png"
-        },
-        ...
-      ]
-    }
-    "`
-    The region ids correspond to the order produced by
-    "_stable_top_level_indices()".  The "mask" field points to the
-    corresponding binary mask file within "masks_dir".
-    """
-    h, w = shape_hw
-    top = _stable_top_level_indices(hier, contours, shape_hw,return_mapping=True)
-    regions = []
-    for j, i in enumerate(top, start=1):
-        #generate binary mask for bbox and centroid calculation
-        m = np.zeros((h, w), np.uint8)
-        _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
-        #bounding box
-        ys, xs = np.where(m > 0)
-        if xs.size > 0:
-            x0, x1 = int(xs.min()), int(xs.max())
-            y0, y1 = int(ys.min()), int(ys.max())
-            bbox = {
-                "x": x0,
-                "y": y0,
-                "width": x1 - x0 + 1,
-                "height": y1 - y0 + 1,
-            }
-        else:
-            bbox = {"x": 0, "y": 0, "width": 0, "height": 0}
-        #centroid (geometric center of mask)
-        M = cv.moments(m, binaryImage=True)
-        cx = float(M["m10"] / (M["m00"] + 1e-9))
-        cy = float(M["m01"] / (M["m00"] + 1e-9))
-        regions.append(
-            {
-                ""
-                "id": j,
-                "bbox": bbox,
-                "centroid": {"x": cx, "y": cy},
-                "mask": f"{masks_dir}/shape_{(j-1):03d}.png",
-            }
-        )
-    meta = {
-        "version": "1.0",
-        "dimensions": {"width": w, "height": h},
-        "total_regions": len(regions),
-        "background_id": 0,
-        "regions": regions,
-        "mapping_centroid_ordering":mapping_dict
-    }
-    with open(out_json, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-
-
-def export_palette_json(
-    palette: List[Tuple[int, int, int]],
-        colourmap,
-    *,
-    out_json: str = "palette.json",#this will be in bgra
-
-    mapping_dict:  Optional[Dict[int, int]] = None,
-    palette_keys: Optional[Sequence[int]] = None,  # when palette is keyed by orig_idx, pass that list here
-) -> None:
-    """
-    palette keyed by new_id (default): palette[j-1] is colour for region id j.
-    palette keyed by orig_idx: pass `palette_keys` (a sequence of original contour indices in palette order)
-        and `mapping_dict={orig_idx->new_id}`; we'll remap to new ids.
-
-    corresponds to region id "j".  DOESNT DO THIS ```OpenCV uses BGR ordering, so convert
-    back to RGB for the JSON file```.
-    region ids 1-based and colors RGB triplets.
-    """
-    out_colourMap: str = "colourmap.json"
-    #takes in rgb palette
-    #Map id -> colour (in RGB)
-    #[POST - HELLO CHECK to see if indexes
-
-    if palette_keys is None:
-        # Palette already in new-id order (1..N)
-        new_to_rgb = {j: {"r": int(r), "g": int(g), "b": int(b)}
-                      for j, (r, g, b) in enumerate(palette, start=1)}
-    else:
-        if mapping_dict is None:
-            raise ValueError("palette_keys provided but mapping_dict is None")
-        if len(palette_keys) != len(palette):
-            raise ValueError("palette_keys and palette must have same length")
-        new_to_rgb = {}
-        for (orig_idx, (r, g, b)) in zip(palette_keys, palette):
-            new_id = mapping_dict.get(orig_idx)
-            if new_id is None:
-                #skip or raise; choose raise for early surfacing of mismatches
-                raise KeyError(f"orig_idx {orig_idx} missing in mapping_dict")
-            new_to_rgb[int(new_id)] = {"r": int(r), "g": int(g), "b": int(b)}
-
-    data = {"background_id": 0, "map": new_to_rgb}
-    with open(out_json, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    #keep colourmap sidecar
-    with open("colourmap.json", "w", encoding="utf-8") as f:
-        json.dump(colourmap, f, ensure_ascii=False, indent=2)
 
 
 
@@ -551,12 +500,8 @@ def _stable_top_level_indices(
         cx[k] = M["m10"] / (M["m00"] + 1e-9)
         cy[k] = M["m01"] / (M["m00"] + 1e-9)
 
-    #image center
-    cx0 = (w - 1) / 2.0
-    cy0 = (h - 1) / 2.0
-
     #Euclidean distance to center (numerically well-behaved)
-    d = np.hypot(cx - cx0, cy - cy0)
+    cx0 = (w - 1) / 2.0;cy0 = (h - 1) / 2.0;d = np.hypot(cx - cx0, cy - cy0)
 
     #nearest-to-center first; stable keep ties deterministic
     order = np.argsort(d, kind="stable")
@@ -565,6 +510,64 @@ def _stable_top_level_indices(
     if return_mapping:
         mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(idxs, start=1)}
         return idxs, mapping_dict
+    return idxs
+
+
+def export_background_and_idmap(
+    contours: List[np.ndarray],
+    hier: np.ndarray,
+    shape_hw: Tuple[int, int],
+    mapping_dict: Dict[int, int],
+    idxs: List[int],
+    *,
+    out_bg: str = "\public\data\mask_background.png",
+    out_idmap: str = "\public\data\id_map.png",
+) -> int:
+    """
+    Generate two raster outputs: "mask_background.png" and "id_map.png".
+    * "mask_background.png" is a single‑channel image where all pixels
+      belonging to any region are 0 and the background is 255.  This
+      simplifies background detection on the front end.
+    * "id_map.png" encodes the region id in the three RGB channels.  The
+      encoding uses a 24‑bit integer: "R = (id >> 16) & 255",
+      "G = (id >> 8) & 255", "B = id & 255".  Region ids start at
+      1; id 0 represents background.  Use "cv.LINE_8" when drawing
+      to avoid anti‑aliased edges.
+
+    Returns the total number of top‑level regions.
+    """
+    h, w = shape_hw
+    bg = np.full((h, w), 1, np.uint8)
+    id_map_rgba = np.zeros((h, w, 4), np.uint8)
+    #top = _stable_top_level_indices(hier, contours)
+
+    remapped_idxs = [mapping_dict.get(i, i) for i in idxs] if mapping_dict else list(idxs)
+
+
+    #keep only valid indices (within contours) and dedupe(preserve order)
+    remapped_idxs = [i for i in remapped_idxs if 0 <= i < len(contours)]
+    remapped_idxs = list(dict.fromkeys(remapped_idxs))
+
+    for j, i in enumerate(remapped_idxs, start=1):
+        #create temp mask for region i
+        m = np.zeros((h, w), np.uint8)
+        _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
+        #encode j into B,G,R (OpenCV uses BGR ordering)
+        select = m > 0
+        bg[select] = 0
+
+        # pack j into (R,G,B) so id = R + (G<<8) + (B<<16)
+        R =  (j       ) & 0xFF
+        G =  (j >> 8  ) & 0xFF
+        B =  (j >> 16 ) & 0xFF
+        alpha   =   (j >> 24 ) & 0xFF
+
+        id_map_rgba[select, 0] = R
+        id_map_rgba[select, 1] = G
+        id_map_rgba[select, 2] = B
+        id_map_rgba[select, 3] = alpha
+    cv.imwrite(out_bg, bg)
+    cv.imwrite(out_idmap, to_bgra(id_map_rgba))
     return idxs
 
 
@@ -666,7 +669,7 @@ def process_image(
         filled = cv.bitwise_and(filled, th)
 
     #4) Contours + hierarchy
-    contours, hierarchy = find_contours_tree(filled, min_area=min_area)
+    contours, hierarchy = find_contours_tree(filled, min_area=min_area)#matched up 0-based idx
 
     #Build palette if requested
     palette = None
@@ -689,8 +692,9 @@ def process_image(
         out_dir=masks_dir_path,
         mask_mode=mask_mode,
     )
-
+    #conforms to ordered_palette_to_centroid_ordering_dict
     colour_map_bgr,palette_bgr   =   colorize_regions(contours, hierarchy, filled.shape,ordered_palette_to_centroid_ordering_dict, palette=palette)
+
     colour_map_rgb = cv.cvtColor(colour_map_bgr, cv.COLOR_BGR2RGB)
     overlay   = draw_overlay(img, contours, color=(0,255,0), thick=2)
 
