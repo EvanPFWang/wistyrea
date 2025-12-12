@@ -670,7 +670,8 @@ def process_image(
 
     #4) Contours + hierarchy
     contours, hierarchy = find_contours_tree(filled, min_area=min_area)#matched up 0-based idx
-
+    #tree traversal of hier with BFS
+    #concurrently replace each
     #Build palette if requested
     palette = None
     if palette_mode.lower() == "kbatch":
