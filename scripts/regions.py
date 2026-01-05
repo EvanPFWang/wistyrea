@@ -158,6 +158,20 @@ import json
 
 from scipy.stats import alpha
 
+
+
+def _part1by1(n: np.ndarray) -> np.ndarray:
+    n = n & 0x0000FFFF
+    n = (n | (n << 8)) & 0x00FF00FF
+    n = (n | (n << 4)) & 0x0F0F0F0F
+    n = (n | (n << 2)) & 0x33333333
+    n = (n | (n << 1)) & 0x55555555
+    return n
+
+def _morton2d(qx: np.ndarray, qy: np.ndarray) -> np.ndarray:
+    return part1by1(qx) | (part1by1(qy) << 1)
+
+
 def _repo_root_from_this_file() -> Path:
     #assumes this file lives at repo_root/scripts/regions.py (adjust .. count if needed)
     return Path(__file__).resolve().parents[1]
@@ -372,6 +386,7 @@ def export_shape_masks(
         y = (m["m01"] / (m["m00"] + 1e-9))
         return (x, y)"""
     original_idxs = np.array(idxs, dtype=int)
+
     centroids = [cv.moments(contours[i]) for i in original_idxs]
     cx = np.array([m["m10"] / (m["m00"] + 1e-9) for m in centroids])
     cy = np.array([m["m01"] / (m["m00"] + 1e-9) for m in centroids])
@@ -380,7 +395,8 @@ def export_shape_masks(
     cx0 = (w - 1) / 2.0;cy0 = (h - 1) / 2.0;d = np.hypot(cx - cx0, cy - cy0)
     sort_order = np.argsort(d,kind="stable")
     sorted_original_idxs = original_idxs[sort_order]#for stable sorting based on multiple keys, np.lexsort is the right tool
-
+    #original are CV assigned indexes
+    #new indexes are CENTROID based
     idxs    =   np.array(idxs).tolist()
     mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(sorted_original_idxs, start=1)}
 
@@ -669,6 +685,9 @@ def process_image(
         filled = cv.bitwise_and(filled, th)
 
     #4) Contours + hierarchy
+
+    #load +-40
+    #opencv uses its OWN indices
     contours, hierarchy = find_contours_tree(filled, min_area=min_area)#matched up 0-based idx
     #tree traversal of hier with BFS
     #concurrently replace each
