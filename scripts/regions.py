@@ -169,9 +169,43 @@ def _part1by1(n: np.ndarray) -> np.ndarray:
     return n
 
 def _morton2d(qx: np.ndarray, qy: np.ndarray) -> np.ndarray:
-    return part1by1(qx) | (part1by1(qy) << 1)
+    return _part1by1(qx) | (_part1by1(qy) << 1)
+#tile_px default to either 4 or 16
+def spatial_reIDX(contours, idxs, img_w, img_h, tile_px):
+    original_idxs = np.array(idxs, dtype=np.int32)
 
+    #robust centroid (fallback to bbox center if moments are degenerate)
+    cx = np.empty(len(original_idxs), dtype=np.float64)
+    cy = np.empty(len(original_idxs), dtype=np.float64)
+    area = np.empty(len(original_idxs), dtype=np.float64)
 
+    for k, i in enumerate(original_idxs):
+        m = cv.moments(contours[i])
+        area[k] = cv.contourArea(contours[i])
+        if abs(m["m00"]) > 1e-9:
+            cx[k] = m["m10"] / m["m00"]
+            cy[k] = m["m01"] / m["m00"]
+        else:
+            x, y, w, h = cv.boundingRect(contours[i])
+            cx[k] = x + 0.5 * w
+            cy[k] = y + 0.5 * h
+    idX =   np.clip(np.rint(cx), 0, img_w - 1).astype(np.uint32)
+    idY =   np.clip(np.rint(cy), 0, img_h - 1).astype(np.uint32)
+
+    tileX   =   (idX//tile_px).astype(np.uint32)
+    tileY   =   (idY//tile_px).astype(np.uint32)
+
+    lx = (idX   - tileX * tile_px).astype(np.uint32)  #local x in tile [0..tile_px-1]
+    ly = (idY   - tileY * tile_px).astype(np.uint32)
+
+    mkey = _morton2d(lx, ly)
+
+    order = np.lexsort((original_idxs, mkey, tileX, tileY))
+    sorted_idxs = original_idxs[order]
+
+    new_id  =   np.empty(len(original_idxs), dtype=np.uint32)
+    new_id[order]   =   np.arange(len(original_idxs),dtype=np.uint32)
+    return sorted_idxs, new_id, (cx, cy, tileX, tileY, mkey)
 def _repo_root_from_this_file() -> Path:
     #assumes this file lives at repo_root/scripts/regions.py (adjust .. count if needed)
     return Path(__file__).resolve().parents[1]
