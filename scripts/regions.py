@@ -433,28 +433,6 @@ def morton_reIDX_export_shape_masks(
     else:
         raise ValueError("mask_mode must be one of {'top','even','all'}")
 
-    """def _centroid(i):
-        m = cv.moments(contours[i]);
-        x = (m["m10"] / (m["m00"] + 1e-9));
-        y = (m["m01"] / (m["m00"] + 1e-9))
-        return (x, y)
-    original_idxs = np.array(idxs, dtype=int)
-
-    centroids = [cv.moments(contours[i]) for i in original_idxs]
-    cx = np.array([m["m10"] / (m["m00"] + 1e-9) for m in centroids])
-    cy = np.array([m["m01"] / (m["m00"] + 1e-9) for m in centroids])
-
-
-    cx0 = (w - 1) / 2.0;cy0 = (h - 1) / 2.0;d = np.hypot(cx - cx0, cy - cy0)
-    sort_order = np.argsort(d,kind="stable")
-    sorted_original_idxs = original_idxs[sort_order]#for stable sorting based on multiple keys, np.lexsort is the right tool
-    #original are CV assigned indexes
-    #new indexes are CENTROID based
-    idxs    =   np.array(idxs).tolist()
-    mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(sorted_original_idxs, start=1)}
-    """
-
-
     #aux=(original_idxs, mkey, tileX, tileY)
 
     sorted_original_idxs, opencv_contour_to_new_idx,aux = _spatial_reIDX(
