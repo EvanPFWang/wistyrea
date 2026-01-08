@@ -1,12 +1,27 @@
+def _sorted_original_from_mapping(mapping_dict: Dict) -> List[int]:
+    items = [(int(k), int(v)) for k, v in mapping_dict.items()]
+    items.sort(key=lambda kv: kv[1])
+    new_ids = [v for _, v in items]
+    if new_ids != list(range(1, len(new_ids) + 1)):#sanity check
+        raise ValueError("mapping_dict new_ids must be contiguous 1..N with no gaps/duplicates")
+    return [orig for orig, _ in items]
+
+_tile_px=8
+
 def export_metadata(
     contours: List[np.ndarray],
     hier: np.ndarray,
     shape_hw: Tuple[int, int],
-        mapping_dict,
+
     *,
+        sorted_idxs: Optional[List[int]] = None,
+        mapping_dict_to_morton_sort: Optional[Dict[int, int]] = None,
     out_json: str = "metadata.json",
-    masks_dir: str = "shape_masks",
-) -> None:
+    masks_dir: str = "shape_masks",) -> None:
+
+
+
+
     """
     Write a JSON file describing each region.  The structure is:
 
@@ -28,16 +43,35 @@ def export_metadata(
     }
     "`
     The region ids correspond to the order produced by
-    "_stable_top_level_indices()".  The "mask" field points to the
+    mapping_dict IN export_shape_,,,, that uses reIDX   The "mask" field points to the
+
+
     corresponding binary mask file within "masks_dir".
     """
     h, w = shape_hw
-    top,mapping_dict = _stable_top_level_indices(hier, contours, shape_hw,return_mapping=True)
+
+    #normalize hierarchy shape if needed
+    if hier is not None and hier.ndim == 3:
+        hier = hier[0]
+
+    #mapping_dict: {orig_idx: new_id} where new_id is 1..N
+
+
+    #sorted_idxs = [orig for orig, new_id in sorted(mapping_dict.items(), key=lambda kv: kv[1])]
+    if sorted_idxs is None:
+        if mapping_dict_to_morton_sort is None:
+            raise ValueError("Provide either sorted_original_idxs or mapping_dict")
+        sorted_idxs = _sorted_original_from_mapping(mapping_dict_to_morton_sort)
+
+    if mapping_dict_to_morton_sort is None:
+        mapping_dict_to_morton_sort = {int(orig): int(j) for j, orig in enumerate(sorted_idxs, start=1)}
+
+    #top,mapping_dict = _stable_top_level_indices(hier, contours, shape_hw,return_mapping=True)
     regions = []
-    for j, i in enumerate(top, start=1):
+    for j, i in enumerate(sorted_idxs, start=1):
         #generate binary mask for bbox and centroid calculation
         m = np.zeros((h, w), np.uint8)
-        _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
+        _draw_subtree_gray(m, contours, hier, int(i), 255, 0, line_type=cv.LINE_8)
         #bounding box
         ys, xs = np.where(m > 0)
         if xs.size > 0:
@@ -58,6 +92,7 @@ def export_metadata(
         regions.append(
             {
                 "id": j,
+                "orig_contour_idx": int(i),  #debugging / traceability
                 "bbox": bbox,
                 "centroid": {"x": cx, "y": cy},
                 "mask": f"{masks_dir}/shape_{(j-1):03d}.png",
@@ -69,8 +104,10 @@ def export_metadata(
         "total_regions": len(regions),
         "background_id": 0,
         "regions": regions,
-        "mapping_centroid_ordering":mapping_dict
+        "mapping_centroid_ordering":mapping_dict_to_morton_sort
     }
+    out_json = Path(out_json)
+    out_json.parent.mkdir(parents=True, exist_ok=True)
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
@@ -422,34 +459,34 @@ def morton_reIDX_export_shape_masks(
 
     #select which contours to save
     if mask_mode == "top":
-        idxs = [i for i in range(len(contours)) if hier[i, 3] == -1]
+        old_idxs = [i for i in range(len(contours)) if hier[i, 3] == -1]
         draw = lambda m, i: _draw_subtree_gray(m, contours, hier, i, 255, 0, line_type=cv.LINE_8)
     elif mask_mode == ("even"):
-        idxs = [i for i in range(len(contours)) if _depth(i, hier) % 2 == 0]
+        old_idxs = [i for i in range(len(contours)) if _depth(i, hier) % 2 == 0]
         draw = lambda m, i: cv.drawContours(m, contours, i, 255, thickness=-1, lineType=cv.LINE_8)
     elif mask_mode == "all":
-        idxs = list(range(len(contours)))
+        old_idxs = list(range(len(contours)))
         draw = lambda m, i: cv.drawContours(m, contours, i, 255, thickness=-1, lineType=cv.LINE_8)
     else:
         raise ValueError("mask_mode must be one of {'top','even','all'}")
 
     #aux=(original_idxs, mkey, tileX, tileY)
 
-    sorted_original_idxs, opencv_contour_to_new_idx,aux = _spatial_reIDX(
-        contours=contours, idxs=idxs, img_w=w, img_h=h, tile_px=4
+    sorted_idxs, opencv_contour_to_new_idx,aux = _spatial_reIDX(
+        contours=contours, idxs=old_idxs, img_w=w, img_h=h, tile_px=_tile_px
     )
-    #sorted_original_idxs    =   tile_then_morton_sorted_idxs
+    #sorted_idxs    =   tile_then_morton_sorted_idxs
 
     mapping_dict = {int(orig_i): int(new_id)
-                    for new_id, orig_i in enumerate(sorted_original_idxs, start=1)}
-    n = int(len(sorted_original_idxs))
-    if n < 256:    dtype = np.uint8
-    elif n <256*256:dtype = np.uint16
+                    for new_id, orig_i in enumerate(sorted_idxs, start=1)}
+    n = int(len(sorted_idxs))
+    if n    <= -1+256:    dtype = np.uint8
+    elif n  <= -1+256*256:dtype = np.uint16
     else:dtype = np.uint32
 
     unified =   np.zeros((h, w), dtype=dtype)
     bit_count_str   =  str(np.dtype(dtype).itemsize * 8)#str(dtype)[3:]#"8","16","32"
-    for j, i in enumerate(sorted_original_idxs, start=1):#1 based new idxs
+    for j, i in enumerate(sorted_idxs, start=1):#1 based new idxs' contours in order
         m = np.zeros((h, w), np.uint8)
         draw(m, i)  # draw the j‑th contour into m
         unified[m > 0] = j  # paint region ID into the unified mask
@@ -478,51 +515,47 @@ def morton_reIDX_export_shape_masks(
     with open(out_dir / f"unified_mask.u{bit_count_str}", "wb") as f:
         f.write(raw.tobytes())
     # return masks, mapping (orig_idx -> 1-based id), and the sorted contour indices
-    return saved, mapping_dict, sorted_original_idxs.astype(int).tolist()# new, conv, old
-
+    return saved, mapping_dict, list(old_idxs)# masks, conv, old
 
 def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
-                     shape_hw: Tuple[int,int],mapping,#mapping is a dict for the contours to their new indexes to be colorized in
+                     shape_hw: Tuple[int,int],mapping_dict_to_morton_sort,#mapping is a dict for the contours to their new indexes to be colorized in
                      palette: Optional[List[Tuple[int,int,int]]] = None) -> np.ndarray:
     h, w = shape_hw
     colour_map = np.zeros((h, w, 3), np.uint8)
 
-    #determine top-level shapes in a stable order
-    top,mapping_Dict = _stable_top_level_indices(hier, contours,shape_hw,return_mapping=True)
-    n = len(top)
-    if mapping is None:
-        #if no palette supplied, fall back to random
-        if palette is None or len(palette) < n:
-            if palette is None: palette = []
-            needed = n - len(palette)
-            rng = np.random.default_rng(42)
-            palette += [tuple(int(x) for x in rng.integers(64, 256, size=3)) for _ in range(needed)]  #RGB
-        palette_bgr = [(r2, g2, b2)[::-1] for (r2, g2, b2) in palette]
-        #draw each top-level with its colour; holes are black
-        for j, i in enumerate(top):
-            _draw_subtree_colour(colour_map, contours, hier, i, root_colour=palette_bgr[j], hole_colour=(0,0,0))#draws with bgr palette
-        return colour_map, palette_bgr#colour_map is palette but cnetroid ordered
-    else:
-        n = int(max(mapping.values()))
-        if palette is None  or  len(palette) < n:
-            if palette is None or len(palette) < n:
-                if palette is None: palette = []
-                needed = n - len(palette)
-                rng = np.random.default_rng(42)
-                palette += [tuple(int(x) for x in rng.integers(64, 256, size=3)) for _ in range(needed)]  # RGB
-        palette_bgr: List[Tuple[int, int, int]] = [(b, g, r) for (r, g, b) in palette[:n]]
-        #palette_rgb: List[Tuple[int, int, int]] = [(r, g, b) for (r, g, b) in palette[:n]]
-    ordered_contours: List[Optional[int]] = [None] * n
-    for orig_idx, new_id in mapping.items():
-        if 1 <= new_id <= n:
-            ordered_contours[new_id - 1] = orig_idx
 
-    for j, orig_idx in enumerate(ordered_contours, start=1):
-        if orig_idx is None:
-            continue  # unmapped id (gap); skip safely
-        _draw_subtree_colour(colour_map,contours,hier, orig_idx,
-                             root_colour=palette_bgr[j-1], hole_colour=(0, 0, 0),
-                             line_type=cv.LINE_AA,)# or LINE_8 if you need crisp edges
+    if hier is not None and hier.ndim == 3: hier = hier[0]
+    #determine top-level shapes in a stable order
+    if mapping_dict_to_morton_sort is None:
+        all_idxs = list(range(len(contours)))
+        sorted_idxs, mapping_dict_to_morton_sort = morton_order_for_idxs(
+            contours=contours, idxs=all_idxs, img_w=w, img_h=h, tile_px=tile_px, mapping_dict=None
+        )
+    else:
+        sorted_idxs = _sorted_original_from_mapping(mapping_dict_to_morton_sort)
+
+    n = len(sorted_idxs)
+    if n == 0:
+        return colour_map, []
+
+
+    if palette  is  None    or len(palette) <  n:#mayb just regenerate kbatch
+        palette = palette_kbatchmeans_rgb(n)
+        if isinstance(palette, np.ndarray):
+            palette = [tuple(int(x) for x in row) for row in palette.reshape(-1, 3)]
+    else: palette = list(palette)
+
+    palette_bgr = [(b, g, r) for (r, g, b) in palette[:n]]
+
+    for j, orig_idx in enumerate(sorted_idxs, start=1):
+        cv.drawContours(
+            colour_map,
+            contours,
+            int(orig_idx),
+            color=palette_bgr[j - 1],
+            thickness=-1,
+            lineType=cv.LINE_AA,
+        )#LINE_8 if you need crisp edges
         #COME BACK HERE to check for rgb or bgr
     return colour_map,palette_bgr
     #conv to rgb @savetime
@@ -535,8 +568,31 @@ def draw_overlay(img_bgr: np.ndarray, contours: List[np.ndarray],
     cv.drawContours(overlay, contours, -1, colour, thick, lineType=cv.LINE_AA)
     return overlay
 
+def morton_order_for_idxs(
+    contours,
+    idxs: List[int],
+    img_w: int,
+    img_h: int,
+    tile_px: int,
+    *,
+    mapping_dict: Optional[Dict[int, int]] = None,
+) -> Tuple[List[int], Dict[int, int]]:
+    """Morton ordering:
+      if mapping_dict is provided, reconstruct order from it (sanity checked)
 
+      else compute Morton order from contours + idxs and build mapping_dict
+    """
+    if mapping_dict is not None:    return _sorted_original_from_mapping(mapping_dict), mapping_dict
 
+    morton_sorted_idxs, contour_to_newid, _aux = _spatial_reIDX(contours=contours, idxs=idxs,
+                                                                img_w=img_w, img_h=img_h, tile_px=_tile_px)
+    sorted_original_idxs = morton_sorted_idxs.astype(int).tolist()
+
+    #only include selected idxs in dict (clean + matches selection)
+    mapping_dict = {int(orig): int(contour_to_newid[int(orig)]) for orig in idxs}
+    return sorted_original_idxs, mapping_dict
+
+"""
 def _stable_top_level_indices(
     hier: np.ndarray,
     contours: List[np.ndarray],
@@ -544,12 +600,12 @@ def _stable_top_level_indices(
     *,
     return_mapping: bool = False,
 ) -> Union[List[int], Tuple[List[int], Dict[int, int]]]:
-    """
+    
     Deterministic order for *top-level* shapes:
     sort by Euclidean distance from the image center (nearest first).
 
     If return_mapping=True, also return {original_contour_idx -> 1-based new id}.
-    """
+    
     h, w = shape_hw
 
     #top-level contours: parent == -1
@@ -576,7 +632,7 @@ def _stable_top_level_indices(
     if return_mapping:
         mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(idxs, start=1)}
         return idxs, mapping_dict
-    return idxs
+    return idxs"""
 
 
 def export_background_and_idmap(
@@ -818,7 +874,7 @@ def process_image(
         contours,
         hierarchy,
         filled.shape,
-        ordered_palette_to_centroid_ordering_dict,
+        mapping_dict_to_morton_sort=ordered_palette_to_centroid_ordering_dict,
         out_json=str(data_dir / "metadata.json"),
         masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),)
     #If palette is defined, persist it so the web app can use the same colours
