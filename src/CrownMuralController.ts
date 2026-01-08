@@ -43,7 +43,7 @@ function normalizePaletteToRGB(raw: unknown): Palette {
       // Already RGB
       return { background_id: bg, map: m as Record<string, RGB> };
     }
-    // Assume hex → RGB
+    // Assume hex -> RGB
     const map = Object.fromEntries(
       Object.entries(m).map(([k, v]) => [k, typeof v === 'string' ? hexToRGB(v) : { r: 0, g: 0, b: 0 }])
     ) as Record<string, RGB>;

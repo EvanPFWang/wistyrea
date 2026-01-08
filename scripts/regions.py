@@ -169,15 +169,21 @@ def _part1by1(n: np.ndarray) -> np.ndarray:
     return n
 
 def _morton2d(qx: np.ndarray, qy: np.ndarray) -> np.ndarray:
+    qx = qx.astype(np.uint32, copy=False)
+    qy = qy.astype(np.uint32, copy=False)
     return _part1by1(qx) | (_part1by1(qy) << 1)
 #tile_px default to either 4 or 16
-def spatial_reIDX(contours, idxs, img_w, img_h, tile_px):
+def _spatial_reIDX(contours, idxs, img_w, img_h, tile_px):
     original_idxs = np.array(idxs, dtype=np.int32)
 
     #robust centroid (fallback to bbox center if moments are degenerate)
     cx = np.empty(len(original_idxs), dtype=np.float64)
     cy = np.empty(len(original_idxs), dtype=np.float64)
     area = np.empty(len(original_idxs), dtype=np.float64)
+
+    tile_px = int(tile_px)
+    if tile_px <= 0:
+        raise ValueError("tile_px must be > 0")
 
     for k, i in enumerate(original_idxs):
         m = cv.moments(contours[i])
@@ -195,17 +201,23 @@ def spatial_reIDX(contours, idxs, img_w, img_h, tile_px):
     tileX   =   (idX//tile_px).astype(np.uint32)
     tileY   =   (idY//tile_px).astype(np.uint32)
 
-    lx = (idX   - tileX * tile_px).astype(np.uint32)  #local x in tile [0..tile_px-1]
-    ly = (idY   - tileY * tile_px).astype(np.uint32)
+    # local coords in tile [0..tile_px-1]
+    #lx = (idX   - tileX * tile_px).astype(np.uint32)
+    #ly = (idY   - tileY * tile_px).astype(np.uint32)
+    lx = (idX % tile_px).astype(np.uint32)
+    ly = (idY % tile_px).astype(np.uint32)
 
     mkey = _morton2d(lx, ly)
+    aux =   (original_idxs, mkey, tileX, tileY)
+    order = np.lexsort(aux)#USE THE FOLLOWING IF ANY JITTER
 
-    order = np.lexsort((original_idxs, mkey, tileX, tileY))
-    sorted_idxs = original_idxs[order]
+    # order = np.lexsort((original_idxs, area, mkey, tileX, tileY))
+    tile_then_morton_sorted_idxs = original_idxs[order]
 
-    new_id  =   np.empty(len(original_idxs), dtype=np.uint32)
-    new_id[order]   =   np.arange(len(original_idxs),dtype=np.uint32)
-    return sorted_idxs, new_id, (cx, cy, tileX, tileY, mkey)
+    opencv_contour_to_new_idx  =   np.zeros(len(original_idxs), dtype=np.uint32)
+    opencv_contour_to_new_idx[tile_then_morton_sorted_idxs]   =   (
+        np.arange(1, len(tile_then_morton_sorted_idxs) + 1, dtype=np.uint32))
+    return tile_then_morton_sorted_idxs, opencv_contour_to_new_idx, aux
 def _repo_root_from_this_file() -> Path:
     #assumes this file lives at repo_root/scripts/regions.py (adjust .. count if needed)
     return Path(__file__).resolve().parents[1]
@@ -383,14 +395,16 @@ def _draw_subtree_colour(
             stack.append((child, depth + 1))
             child = hier[child, 0]
 
-def export_shape_masks(
+def morton_reIDX_export_shape_masks(
     contours: List[np.ndarray],
     hier: np.ndarray,
     shape_hw: Tuple[int, int],
     out_dir: Path,
     mask_mode: str = "top",
+    vectorization_support_bool: bool = False,
 ) -> Tuple[List[Path], Dict[int, int], List[int]]:
     """
+    Spatially reindexes with morton ordering
     Export binary masks for contours.  mask_mode controls which 0-based contours are saved:
       "top": only top‑level contours (current behaviour)
       "even": only even‑depth contours (filled interiors, holes skipped)
@@ -400,6 +414,11 @@ def export_shape_masks(
     out_dir.mkdir(parents=True, exist_ok=True)
     h, w = shape_hw
     saved: List[Path] = []
+
+    if hier is None:
+        return [], {}, []
+    if hier.ndim == 3:
+        hier = hier[0]
 
     #select which contours to save
     if mask_mode == "top":
@@ -418,7 +437,7 @@ def export_shape_masks(
         m = cv.moments(contours[i]);
         x = (m["m10"] / (m["m00"] + 1e-9));
         y = (m["m01"] / (m["m00"] + 1e-9))
-        return (x, y)"""
+        return (x, y)
     original_idxs = np.array(idxs, dtype=int)
 
     centroids = [cv.moments(contours[i]) for i in original_idxs]
@@ -433,11 +452,25 @@ def export_shape_masks(
     #new indexes are CENTROID based
     idxs    =   np.array(idxs).tolist()
     mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(sorted_original_idxs, start=1)}
+    """
 
-    dtype   =   np.uint16   if len(idxs) >= 256 else np.uint8
-    dtype   =   np.uint32 if len(idxs)>=256*256 else dtype
+
+    #aux=(original_idxs, mkey, tileX, tileY)
+
+    sorted_original_idxs, opencv_contour_to_new_idx,aux = _spatial_reIDX(
+        contours=contours, idxs=idxs, img_w=w, img_h=h, tile_px=4
+    )
+    #sorted_original_idxs    =   tile_then_morton_sorted_idxs
+
+    mapping_dict = {int(orig_i): int(new_id)
+                    for new_id, orig_i in enumerate(sorted_original_idxs, start=1)}
+    n = int(len(sorted_original_idxs))
+    if n < 256:    dtype = np.uint8
+    elif n <256*256:dtype = np.uint16
+    else:dtype = np.uint32
+
     unified =   np.zeros((h, w), dtype=dtype)
-    bit_count_str   =   str(dtype)[3:]#"8","16","32"
+    bit_count_str   =  str(np.dtype(dtype).itemsize * 8)#str(dtype)[3:]#"8","16","32"
     for j, i in enumerate(sorted_original_idxs, start=1):#1 based new idxs
         m = np.zeros((h, w), np.uint8)
         draw(m, i)  # draw the j‑th contour into m
@@ -455,6 +488,11 @@ def export_shape_masks(
     unified_rgba = np.dstack([R, G, B,   alpha])
     # after loop finishes, save unified mask in the same directory
     cv.imwrite(str(out_dir / "unified_mask.png"), unified_bgra)
+
+    if vectorization_support_bool:
+        unified_rgba = np.dstack([R, G, B, alpha])
+        cv.imwrite(str(out_dir / "unified_mask_rgba.png"), unified_rgba)
+
     # write little-endian bytes for web use (u8/u16/u32)
     if dtype == np.uint8:raw = unified.astype("|u1", copy=False)
     elif dtype == np.uint16:raw = unified.astype("<u2", copy=False)
@@ -462,7 +500,7 @@ def export_shape_masks(
     with open(out_dir / f"unified_mask.u{bit_count_str}", "wb") as f:
         f.write(raw.tobytes())
     # return masks, mapping (orig_idx -> 1-based id), and the sorted contour indices
-    return saved, mapping_dict, idxs# new, conv, old
+    return saved, mapping_dict, sorted_original_idxs.astype(int).tolist()# new, conv, old
 
 
 def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
@@ -739,13 +777,15 @@ def process_image(
     masks_dir_path = _abs_out(out_masks_dir, data_dir)
     masks_dir_path.mkdir(parents=True, exist_ok=True)
 
-    saved_masks,ordered_palette_to_centroid_ordering_dict,original_idxs = export_shape_masks(
+    saved_masks,ordered_palette_to_centroid_ordering_dict,original_idxs = (
+        morton_reIDX_export_shape_masks(
         contours=contours,
         hier=hierarchy,
         shape_hw=filled.shape,
         out_dir=masks_dir_path,
         mask_mode=mask_mode,
-    )
+        vectorization_support_bool=False
+    ))
     #conforms to ordered_palette_to_centroid_ordering_dict
     colour_map_bgr,palette_bgr   =   colorize_regions(contours, hierarchy, filled.shape,ordered_palette_to_centroid_ordering_dict, palette=palette)
 
