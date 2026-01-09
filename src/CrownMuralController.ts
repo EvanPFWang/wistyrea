@@ -87,8 +87,7 @@ export const MASK_INDEX_RE = /(?:^|\/)(?:shape|mask)_(?<index>\d+)\.png$/i;
 
 
 type ResolvedConfig = Required<
-  Pick<
-    ControllerConfig, 'dataPath'|'enableDebug'|'maxFPS'|'maskBackgroundIndex'>
+  Pick<ControllerConfig, 'dataPath'|'enableDebug'|'maxFPS'|'maskBackgroundIndex'>
   > & Omit<
     ControllerConfig, 'dataPath'|'enableDebug'|'maxFPS'|'maskBackgroundIndex'
 > & {metadataPath: string;
