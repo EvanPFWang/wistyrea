@@ -529,7 +529,7 @@ def colorize_regions(contours: List[np.ndarray], hier: np.ndarray,
     if mapping_dict_to_morton_sort is None:
         all_idxs = list(range(len(contours)))
         sorted_idxs, mapping_dict_to_morton_sort = morton_order_for_idxs(
-            contours=contours, idxs=all_idxs, img_w=w, img_h=h, tile_px=tile_px, mapping_dict=None
+            contours=contours, idxs=all_idxs, img_w=w, img_h=h, tile_px=_tile_px, mapping_dict=None
         )
     else:
         sorted_idxs = _sorted_original_from_mapping(mapping_dict_to_morton_sort)
@@ -592,47 +592,6 @@ def morton_order_for_idxs(
     mapping_dict = {int(orig): int(contour_to_newid[int(orig)]) for orig in idxs}
     return sorted_original_idxs, mapping_dict
 
-"""
-def _stable_top_level_indices(
-    hier: np.ndarray,
-    contours: List[np.ndarray],
-    shape_hw: Tuple[int, int],
-    *,
-    return_mapping: bool = False,
-) -> Union[List[int], Tuple[List[int], Dict[int, int]]]:
-    
-    Deterministic order for *top-level* shapes:
-    sort by Euclidean distance from the image center (nearest first).
-
-    If return_mapping=True, also return {original_contour_idx -> 1-based new id}.
-    
-    h, w = shape_hw
-
-    #top-level contours: parent == -1
-    #(OpenCV hierarchy layout: [next, prev, first_child, parent])
-    orig_idxs = np.where(hier[:, 3] == -1)[0]
-    if orig_idxs.size == 0:
-        return ([], {}) if return_mapping else []
-
-    #centroids via image moments: Cx = m10/m00, Cy = m01/m00
-    cx = np.empty(orig_idxs.size, dtype=float)
-    cy = np.empty(orig_idxs.size, dtype=float)
-    for k, i in enumerate(orig_idxs):
-        M = cv.moments(contours[i])
-        cx[k] = M["m10"] / (M["m00"] + 1e-9)
-        cy[k] = M["m01"] / (M["m00"] + 1e-9)
-
-    #Euclidean distance to center (numerically well-behaved)
-    cx0 = (w - 1) / 2.0;cy0 = (h - 1) / 2.0;d = np.hypot(cx - cx0, cy - cy0)
-
-    #nearest-to-center first; stable keep ties deterministic
-    order = np.argsort(d, kind="stable")
-    idxs = orig_idxs[order].tolist()
-
-    if return_mapping:
-        mapping_dict = {orig_idx: new_id for new_id, orig_idx in enumerate(idxs, start=1)}
-        return idxs, mapping_dict
-    return idxs"""
 
 
 def export_background_and_idmap(
