@@ -786,7 +786,6 @@ def process_image(
     overlay   = draw_overlay(img, contours, color=(0,255,0), thick=2)
 
 
-
     #Normalize preview outputs too: if caller passed bare names, send to public/data
     overlay_path = _abs_out(out_overlay_path, data_dir)
     filled_path = _abs_out(out_filled_path, data_dir)
