@@ -87,6 +87,8 @@ def export_metadata(
         M = cv.moments(m,binaryImage=True)
         cx = float(M["m10"] / (M["m00"] + 1e-9))
         cy = float(M["m01"] / (M["m00"] + 1e-9))
+
+        new_id = int(mapping_dict_to_morton_sort[int(i)])
         regions.append(
             {
                 "id": j,
@@ -94,7 +96,7 @@ def export_metadata(
                 "bbox": bbox,
                 "centroid": {"x": cx,"y": cy},
                 #reference RLE-encoded mask (.bin) instead of old PNG mask
-                "mask": f"{masks_dir}/shape_{(j - 1):03d}.bin",
+                "mask": f"{masks_dir}/shape_{(new_id - 1):03d}.bin",
             }
         )
     meta = {
@@ -253,7 +255,7 @@ def _spatial_reIDX(contours,idxs,img_w,img_h,tile_px):
     #order = np.lexsort((original_idxs,area,mkey,tileX,tileY))
     tile_then_morton_sorted_idxs = original_idxs[order]
 
-    opencv_contour_to_new_idx = np.zeros(len(original_idxs),dtype=np.uint32)
+    opencv_contour_to_new_idx = np.zeros(len(contours),dtype=np.uint32)
     opencv_contour_to_new_idx[tile_then_morton_sorted_idxs] = (
         np.arange(1,len(tile_then_morton_sorted_idxs) + 1,dtype=np.uint32))
     return tile_then_morton_sorted_idxs,opencv_contour_to_new_idx,aux
@@ -644,7 +646,8 @@ def export_background_and_idmap(
         mapping_dict: Dict[int,int],
         idxs: List[int],
         *,
-        out_idmap: str = "\public\data\id_map.png",
+        out_id_map: str = "\public\data\id_map.png",
+        out_bg_bin: str = "\public\data\mask_background.bin",
 ) -> int:
     """
     generate colour-encoded ID map forgiven regions.
@@ -664,14 +667,14 @@ def export_background_and_idmap(
         Mapping from original contour indices to new 1-based region IDs.
     idxs : List[int]
         List of original contour indices to include inID map.
-    out_idmap : str,optional
+    out_id_map : str,optional
         Path to saveresulting ID map PNG. Default is ``"\public\data\id_map.png"``.
 
     returns number of regions encoded inID map.
         """
     h,w = shape_hw
     id_map_rgba = np.zeros((h,w,4),np.uint8)
-
+    bg_mask = np.ones((h, w), np.uint8)
     #mapping_dict is {orig_contour_idx -> new_id}
     #so reconstruct EXACT contour order from mapping
     contour_idxs = _sorted_original_from_mapping(mapping_dict) if mapping_dict else list(idxs)
@@ -686,6 +689,13 @@ def export_background_and_idmap(
         m = np.zeros((h,w),np.uint8)
         _draw_subtree_gray(m,contours,hier,orig_idx,255,0,line_type=cv.LINE_8)
         select = m > 0
+        bg_mask[select] = 0
+
+        # write mask_background.bin as RLE u32 LE (1=background, 0=region)
+        bg_rle = _rle_encode_binary_mask(bg_mask)
+        with open(out_bg_bin, "wb") as f:
+            f.write(bg_rle.astype("<u4", copy=False).tobytes())
+
 
         #use the REAL region id (new_id), not enumerate()
         region_id = int(mapping_dict.get(orig_idx, 0)) if mapping_dict else 0
@@ -704,7 +714,7 @@ def export_background_and_idmap(
         id_map_rgba[select,3] = A
 
     #write ID map as BGRA for consistency with OpenCV
-    cv.imwrite(out_idmap,to_bgra(id_map_rgba))
+    cv.imwrite(out_id_map,to_bgra(id_map_rgba))
     return len(contour_idxs)
 
 
@@ -814,10 +824,6 @@ def process_image(
     #tree traversal of hier with BFS
     #concurrently replace each
     #Build palette if requested
-    palette = None
-    if palette_mode.lower() == "kbatch":
-        n_top = sum(1 for i in range(len(contours)) if hierarchy[i,3] == -1)
-        if n_top > 0:   palette = palette_kbatchmeans_rgb(n_top,sample_step=sample_step)
 
     repo_root = _repo_root_from_this_file()
     data_dir = (repo_root / "public" / "data").resolve()
@@ -839,6 +845,15 @@ def process_image(
     #conforms to ordered_palette_to_centroid_ordering_dict
     #We no longer generate coloured overlays or per-region coloured maps here.
     #Instead,onlyfilled mask and RLE-encoded shape masks are produced.
+
+
+
+    palette = None
+    if palette_mode.lower() == "kbatch":
+        n_top = sum(1 for i in range(len(contours)) if hierarchy[i,3] == -1)
+        if n_top > 0:   palette = palette_kbatchmeans_rgb( len(ordered_palette_to_centroid_ordering_dict),sample_step=sample_step)
+
+
 
     #Normalize preview output path for filled mask
     filled_path = _abs_out(out_filled_path,data_dir)
