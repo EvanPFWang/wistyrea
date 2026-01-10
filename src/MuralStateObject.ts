@@ -51,11 +51,43 @@ export class MuralStateObject extends DurableObject {
   private adapter: GPUAdapter | null = null;
   private device: GPUDevice | null = null;
 
+
+  private shaderModule: GPUShaderModule | null = null;
+  private computePipeline: GPUComputePipeline | null = null;
+
+  private initGpuPromise: Promise<void> | null = null;//race safe init
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     //state init if using SQLite happens here
   }
 
+
+  private async ensureGpuReady(): Promise<GPUDevice> {
+    if (this.device) return this.device;
+
+    //single init runs even if requests overlap
+    this.initGpuPromise ??= (async () => {
+      if (!navigator.gpu) {
+        throw new Error("WebGPU not supported in this environment");
+      }
+      this.adapter = await navigator.gpu.requestAdapter();
+      if (!this.adapter) throw new Error("No GPU adapter found");
+
+      this.device = await this.adapter.requestDevice();
+
+      //build pipeline once
+      this.shaderModule = this.device.createShaderModule({ code: RLE_DECODE_SHADER });
+      this.computePipeline = this.device.createComputePipeline({
+        layout: "auto",
+        compute: { module: this.shaderModule, entryPoint: "main" },
+      });
+    })();
+
+    await this.initGpuPromise;
+    return this.device!;
+  }
+  
   async fetch(request: Request): Promise<Response> {
     //init GPU (Lazy Load)
     if (!this.device) {
