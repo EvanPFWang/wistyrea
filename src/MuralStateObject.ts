@@ -55,7 +55,7 @@ export class MuralStateObject extends DurableObject {
   private shaderModule: GPUShaderModule | null = null;
   private computePipeline: GPUComputePipeline | null = null;
 
-  private initGpuPromise: Promise<void> | null = null;//race safe init
+  private initGPUPromise: Promise<void> | null = null;//race safe init
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -63,11 +63,11 @@ export class MuralStateObject extends DurableObject {
   }
 
 
-  private async ensureGpuReady(): Promise<GPUDevice> {
+  private async ensureGPUReady(): Promise<GPUDevice> {
     if (this.device) return this.device;
 
     //single init runs even if requests overlap
-    this.initGpuPromise ??= (async () => {
+    this.initGPUPromise ??= (async () => {
       if (!navigator.gpu) {
         throw new Error("WebGPU not supported in this environment");
       }
@@ -84,109 +84,105 @@ export class MuralStateObject extends DurableObject {
       });
     })();
 
-    await this.initGpuPromise;
+    await this.initGPUPromise;
     return this.device!;
   }
-  
-  async fetch(request: Request): Promise<Response> {
-    //init GPU (Lazy Load)
-    if (!this.device) {
-      if (!navigator.gpu) {
-        return new Response("WebGPU not supported in this environment", { status: 500 });
-      }
-      this.adapter = await navigator.gpu.requestAdapter();
-      if (!this.adapter) {
-        return new Response("No GPU adapter found", { status: 500 });
-      }
-      this.device = await this.adapter.requestDevice();
+
+async fetch(request: Request): Promise<Response> {
+    if (request.method !== "POST") {
+      return new Response("Method not allowed", { status: 405 });
     }
-    const device = this.device!;
 
-    //parse Request (expects RLE binary in body, OutputSize in header)
-    if (request.method === "POST") {
-      const rleBuffer = await request.arrayBuffer();
-      const outputSize = parseInt(request.headers.get("X-Output-Size") || "0");
+    let device: GPUDevice;
+    try {
+      device = await this.ensureGPUReady();
+    } catch (err: any) {
+      return new Response(String(err?.message ?? err), { status: 500 });
+    }
 
-      if (rleBuffer.byteLength === 0 || outputSize === 0) {
-        return new Response("Invalid input data or Missing X-Output-Size", { status: 400 });
-      }
+    const rleBuffer = await request.arrayBuffer();
+    const outputSize = parseInt(request.headers.get("X-Output-Size") || "0", 10);
 
-      //GPU resource alloc
-      //
-      //input Buffer (RLE data)
-      const inputGPUBuffer = device.createBuffer({
-        size: rleBuffer.byteLength, //must be 4-byte aligned
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true
-      });
-      new Uint8Array(inputGPUBuffer.getMappedRange()).set(new Uint8Array(rleBuffer));
-      inputGPUBuffer.unHxmap();
+    if (rleBuffer.byteLength === 0 || outputSize === 0) {
+      return new Response("Invalid input data or Missing X-Output-Size", { status: 400 });
+    }
 
-      //output buffer(raw pixels) - 4 bytes per pixel (u32)
-      const outputByteSize = outputSize * 4;
-      const outputGPUBuffer = device.createBuffer({
-        size: outputByteSize,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
-      });
+    //pad to multiple of 4 bytes (required when mappedAtCreation=true)
+    const rleBytes = new Uint8Array(rleBuffer);
+    const paddedSize = (rleBytes.byteLength + 3) & ~3;
+    const rlePadded =
+      paddedSize === rleBytes.byteLength
+        ? rleBytes
+        : (() => {
+            const p = new Uint8Array(paddedSize);
+            p.set(rleBytes);
+            return p;
+          })();
 
-      //uniform buffer (params)
-      const paramBufferSize = 16; //4 bytes needed, but 16 byte alignment safer
-      const paramBuffer = device.createBuffer({
-        size: paramBufferSize,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-      });
+    const outputByteSize = outputSize * 4;
+
+    //alloc per-request resources (wrap in try/finally so always destroy)
+    const inputGPUBuffer = device.createBuffer({
+      size: rlePadded.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+
+    const outputGPUBuffer = device.createBuffer({
+      size: outputByteSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+
+    const paramBuffer = device.createBuffer({
+      size: 16, //16-byte aligned safe for uniforms
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    const stagingBuffer = device.createBuffer({
+      size: outputByteSize,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+
+    try {
+      //write input + unmap
+      new Uint8Array(inputGPUBuffer.getMappedRange()).set(rlePadded);
+      inputGPUBuffer.unmap();
+
       device.queue.writeBuffer(paramBuffer, 0, new Uint32Array([outputSize]));
 
-      //pipeline setup
-      const shaderModule = device.createShaderModule({ code: RLE_DECODE_SHADER });
-      const computePipeline = device.createComputePipeline({
-        layout: 'auto',
-        compute: { module: shaderModule, entryPoint: "main" }
-      });
-
+      const computePipeline = this.computePipeline!;
       const bindGroup = device.createBindGroup({
         layout: computePipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: { buffer: inputGPUBuffer } },
           { binding: 1, resource: { buffer: outputGPUBuffer } },
-          { binding: 2, resource: { buffer: paramBuffer } }
-        ]
+          { binding: 2, resource: { buffer: paramBuffer } },
+        ],
       });
 
-      //execution (Dispatch)
       const commandEncoder = device.createCommandEncoder();
       const passEncoder = commandEncoder.beginComputePass();
       passEncoder.setPipeline(computePipeline);
       passEncoder.setBindGroup(0, bindGroup);
-      passEncoder.dispatchWorkgroups(1); // Single workgroup for linear RLE decode
+      passEncoder.dispatchWorkgroups(1);
       passEncoder.end();
 
-      //copy result to staging buffer for reading
-      const stagingBuffer = device.createBuffer({
-        size: outputByteSize,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
-      });
       commandEncoder.copyBufferToBuffer(outputGPUBuffer, 0, stagingBuffer, 0, outputByteSize);
-
       device.queue.submit([commandEncoder.finish()]);
 
-      // 6. Read Back Results
       await stagingBuffer.mapAsync(GPUMapMode.READ);
       const copyArrayBuffer = stagingBuffer.getMappedRange().slice(0);
       stagingBuffer.unmap();
 
-      //cleanup (Optional: Buffers are GC'd, but explicit destroy is good for VRAM)
+      return new Response(copyArrayBuffer, {
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+    } finally {
+      //explicit cleanup
       inputGPUBuffer.destroy();
       outputGPUBuffer.destroy();
       paramBuffer.destroy();
       stagingBuffer.destroy();
-
-      //return raw pixel data (Uint32Array buffer)
-      return new Response(copyArrayBuffer, {
-        headers: { "Content-Type": "application/octet-stream" }
-      });
     }
-
-    return new Response("Method not allowed", { status: 405 });
   }
 }
