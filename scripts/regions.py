@@ -459,21 +459,21 @@ def _rle_encode_binary_mask(mask: np.ndarray) -> np.ndarray:
 
     return 1D array of dtype np.uint32 containing [start_val,run_len1,run_len2,...].
     """
-    #Flatten mask to 0/1 values in row-major order
+    #flatten mask to 0/1 values in row-major order
     flat = (mask > 0).astype(np.uint8).reshape(-1)
     total = flat.size
     if total == 0:
-        #Empty mask: start with 0 and no runs
+        #empty mask: start with 0 and no runs
         return np.array([0],dtype=np.uint32)
     start_val = np.uint32(flat[0])
-    #Find change points where value switches between 0 and 1
+    #find change points where value switches between 0 and 1
     #np.diff yields non-zero where change occurs; positions refer to end of previous run
     changes = np.nonzero(np.diff(flat))[0] + 1
-    #Calculate run lengths by taking differences between consecutive change points
-    #Include start (0) and end (total)
+    #calculate run lengths by taking differences between consecutive change points
+    #include start (0) and end (total)
     positions = np.concatenate(([0],changes,[total])).astype(np.int64)
     run_lengths = np.diff(positions).astype(np.uint32)
-    #Prependstart value torun lengths
+    #prependstart value to run lengths
     return np.concatenate(([start_val],run_lengths))
 
 
@@ -521,7 +521,7 @@ def morton_reIDX_export_shape_masks(
     if hier.ndim == 3:
         hier = hier[0]
 
-    #Select which contours to save based on mask_mode
+    #select which contours to save based on mask_mode
     if mask_mode == "top":
         old_idxs = [i for i in range(len(contours)) if hier[i,3] == -1]
         draw = lambda m,i: _draw_subtree_gray(m,contours,hier,i,255,0,line_type=cv.LINE_8)
@@ -534,28 +534,28 @@ def morton_reIDX_export_shape_masks(
     else:
         raise ValueError("mask_mode must be one of {'top','even','all'}")
 
-    #Spatially reorder contours using Morton ordering
+    #spatially reorder contours using Morton ordering
     sorted_idxs,_contour_to_new_idx,_aux = _spatial_reIDX(
         contours=contours,idxs=old_idxs,img_w=w,img_h=h,tile_px=_tile_px
     )
 
-    #Build mapping from original contour index to new ID (1-based)
+    #build mapping from original contour index to new ID (1-based)
     mapping_dict = {int(orig_i): int(new_id) for new_id,orig_i in enumerate(sorted_idxs,start=1)}
 
-    #Generate per-region binary masks and save as RLE-encoded .bin
+    #generate per-region binary masks and save as RLE-encoded .bin
     for j,orig_idx in enumerate(sorted_idxs,start=1):
         m = np.zeros((h,w),np.uint8)
         draw(m,int(orig_idx))
-        #Encode mask to RLE binary data
+        #encode mask to RLE binary data
         rle = _rle_encode_binary_mask(m)
-        #Write RLE buffer to .bin file (little-endian 32-bit unsigned integers)
+        #write RLE buffer to .bin file (little-endian 32-bit unsigned integers)
         p = out_dir / f"shape_{(j - 1):03d}.bin"
         rle_bytes = rle.astype("<u4",copy=False).tobytes()
         with open(p,"wb") as f:
             f.write(rle_bytes)
         saved.append(p)
 
-    #Returnlist of saved .bin paths,mapping dictionary,andoriginal indices list
+    #returnlist of saved .bin paths,mapping dictionary,andoriginal indices list
     return saved,mapping_dict,list(old_idxs)
 
 
@@ -668,32 +668,44 @@ def export_background_and_idmap(
         Path to saveresulting ID map PNG. Default is ``"\public\data\id_map.png"``.
 
     returns number of regions encoded inID map.
-    """
+        """
     h,w = shape_hw
     id_map_rgba = np.zeros((h,w,4),np.uint8)
 
-    #Resolvecontour indices according toprovided mapping_dict and
-    #ensure they are within bounds and unique.
-    remapped_idxs = [mapping_dict.get(i,i) for i in idxs] if mapping_dict else list(idxs)
-    remapped_idxs = [i for i in remapped_idxs if 0 <= i < len(contours)]
-    remapped_idxs = list(dict.fromkeys(remapped_idxs))
+    #mapping_dict is {orig_contour_idx -> new_id}
+    #so reconstruct EXACT contour order from mapping
+    contour_idxs = _sorted_original_from_mapping(mapping_dict) if mapping_dict else list(idxs)
 
-    for j,i in enumerate(remapped_idxs,start=1):
+    #keep only valid indices (within contours) and dedupe(preserve order)
+    contour_idxs = [i for i in contour_idxs if 0 <= int(i) < len(contours)]
+    contour_idxs = list(dict.fromkeys(contour_idxs))
+
+    for orig_idx in contour_idxs:
+        orig_idx = int(orig_idx)
+
         m = np.zeros((h,w),np.uint8)
-        _draw_subtree_gray(m,contours,hier,i,255,0,line_type=cv.LINE_8)
+        _draw_subtree_gray(m,contours,hier,orig_idx,255,0,line_type=cv.LINE_8)
         select = m > 0
-        #Pack j into (R,G,B) channels
-        R = (j) & 0xFF
-        G = (j >> 8) & 0xFF
-        B = (j >> 16) & 0xFF
-        alpha = (j >> 24) & 0xFF
+
+        #use the REAL region id (new_id), not enumerate()
+        region_id = int(mapping_dict.get(orig_idx, 0)) if mapping_dict else 0
+        if region_id <= 0:
+            continue
+
+        #pack region_id into (R,G,B,A) channels
+        R = (region_id      ) & 0xFF
+        G = (region_id >>  8) & 0xFF
+        B = (region_id >> 16) & 0xFF
+        A = (region_id >> 24) & 0xFF
+
         id_map_rgba[select,0] = R
         id_map_rgba[select,1] = G
         id_map_rgba[select,2] = B
-        id_map_rgba[select,3] = alpha
-    #WriteID map as BGRA for consistency with OpenCV
+        id_map_rgba[select,3] = A
+
+    #write ID map as BGRA for consistency with OpenCV
     cv.imwrite(out_idmap,to_bgra(id_map_rgba))
-    return len(remapped_idxs)
+    return len(contour_idxs)
 
 
 def _rgb_sample_grid(step: int = 7,lo: int = 24,hi: int = 231) -> np.ndarray:
@@ -835,17 +847,18 @@ def process_image(
     #Informuser whereshape masks have been exported
     print(f"Shape masks are being exported to: {masks_dir_path}")
 
-    #Export ID map forfront end; do not generate separate background mask
+    #export ID map forfront end; do not generate separate background mask
     regions_count = export_background_and_idmap(
         contours,
         hierarchy,
         filled.shape,
         ordered_palette_to_centroid_ordering_dict,
         original_idxs,
-        out_idmap=str(data_dir / "id_map.png"),
+        out_id_map=str(data_dir / "id_map.png"),
+        out_bg_bin=str(data_dir / "mask_background.bin"),
     )
 
-    #Export metadata describingregions
+    #export metadata describingregions
     export_metadata(
         contours,
         hierarchy,
@@ -855,9 +868,9 @@ def process_image(
         masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),
     )
 
-    #Persistpalette for use byweb app (if generated)
+    #persistpalette for use byweb app (if generated)
     if palette is not None:
-        #We pass an empty list forcolourmap parameter since we no longer generate preview image
+        #pass empty list forcolourmap parameter since no longer generate preview image
         export_palette_json(
             palette,
             [],
