@@ -305,6 +305,7 @@ export class CrownMuralController {
   private readIdAt(clientX: number, clientY: number): number {
     if (!this.idImageData) return 0;
     const rect = this.canvas.getBoundingClientRect();
+
     const x = Math.floor((clientX - rect.left) * (this.idCanvas.width / rect.width));
     const y = Math.floor((clientY - rect.top) * (this.idCanvas.height / rect.height));
 
