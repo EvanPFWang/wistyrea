@@ -66,9 +66,11 @@ def export_metadata(
 
     #top,mapping_dict = _stable_top_level_indices(hier,contours,shape_hw,return_mapping=True)
     regions = []
+
+    #j are the new_idx
     for j,i in enumerate(sorted_idxs,start=1):
         #generate binary mask for bbox and centroid calculation
-        m = np.zeros((h,w),np.uint8)
+        m = np.zeros((h,w),np.uint8)#draws (i-1)th 
         _draw_subtree_gray(m,contours,hier,int(i),255,0,line_type=cv.LINE_8)
         #bounding box
         ys,xs = np.where(m > 0)
@@ -396,6 +398,7 @@ def _draw_subtree_gray(
     for crisp,non–anti‑aliased masks (useful for ID maps).
     """
     stack = [(root_idx,0)]
+    #draws (i-1)th since (0-based) open cv indexed contour into the list channel
     while stack:
         i,depth = stack.pop()
         colour = root_colour if (depth % 2 == 0) else hole_colour
@@ -658,15 +661,15 @@ def export_background_and_idmap(
     at 0.
 
     contours : List[np.ndarray]
-        Contours detected inimage.
+        Contours detected inimage with opencv idx.
     hier : np.ndarray
         Hierarchy array from cv.findContours.
     shape_hw : Tuple[int,int]
         Height and width ofimage (h,w).
     mapping_dict : Dict[int,int]
-        Mapping from original contour indices to new 1-based region IDs.
+        Mapping from original contour indices to newID 1-based region IDs.
     idxs : List[int]
-        List of original contour indices to include inID map.
+        List of opencv contour indices TRANSLATED TO corresponding newID
     out_id_map : str,optional
         Path to saveresulting ID map PNG. Default is ``"\public\data\id_map.png"``.
 
@@ -703,15 +706,14 @@ def export_background_and_idmap(
             continue
 
         #pack region_id into (R,G,B,A) channels
-        R = (region_id      ) & 0xFF
-        G = (region_id >>  8) & 0xFF
-        B = (region_id >> 16) & 0xFF
-        A = (region_id >> 24) & 0xFF
+        id_map_rgba[select, 0] = (region_id      ) & 0xFF
+        id_map_rgba[select, 1] = (region_id >>  8) & 0xFF
+        id_map_rgba[select, 2] = (region_id >> 16) & 0xFF
+        id_map_rgba[select, 3] = (region_id >> 24) & 0xFF
 
-        id_map_rgba[select,0] = R
-        id_map_rgba[select,1] = G
-        id_map_rgba[select,2] = B
-        id_map_rgba[select,3] = A
+    bg_rle = _rle_encode_binary_mask(bg_mask)
+    with open(out_bg_bin, "wb") as f:
+        f.write(bg_rle.astype("<u4", copy=False).tobytes())
 
     #write ID map as BGRA for consistency with OpenCV
     cv.imwrite(out_id_map,to_bgra(id_map_rgba))

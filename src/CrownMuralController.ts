@@ -305,8 +305,8 @@ export class CrownMuralController {
   private readIdAt(clientX: number, clientY: number): number {
     if (!this.idImageData) return 0;
     const rect = this.canvas.getBoundingClientRect();
-    const x = Math.floor((clientX - rect.left) * (this.canvas.width / rect.width));
-    const y = Math.floor((clientY - rect.top) * (this.canvas.height / rect.height));
+    const x = Math.floor((clientX - rect.left) * (this.idCanvas.width / rect.width));
+    const y = Math.floor((clientY - rect.top) * (this.idCanvas.height / rect.height));
 
     if (x < 0 || x >= this.idCanvas.width || y < 0 || y >= this.idCanvas.height) return 0;
 
@@ -323,7 +323,9 @@ export class CrownMuralController {
     if (!region?.mask) return null;
 
     //fetch binary RLE
-    const res = await fetch(url(region.mask));
+    const maskPath = this.resolveFromMetaDir(region.mask);
+    const res = await fetch(url(maskPath));
+
     if (!res.ok) return null;
     const rleBuffer = await res.arrayBuffer();
 
