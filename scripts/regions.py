@@ -622,7 +622,7 @@ def morton_order_for_idxs(
         idxs: List[int],
         img_w: int,
         img_h: int,
-        tile_px: int,
+        tile_px: int=_tile_px,
         *,
         mapping_dict: Optional[Dict[int,int]] = None,
 ) -> Tuple[List[int],Dict[int,int]]:
@@ -634,7 +634,7 @@ def morton_order_for_idxs(
     if mapping_dict is not None:    return _sorted_original_from_mapping(mapping_dict),mapping_dict
 
     morton_sorted_idxs,contour_to_newid,_aux = _spatial_reIDX(contours=contours,idxs=idxs,
-                                                                img_w=img_w,img_h=img_h,tile_px=_tile_px)
+                                                                img_w=img_w,img_h=img_h,tile_px=tile_px)
     sorted_original_idxs = morton_sorted_idxs.astype(int).tolist()
 
     #only include selected idxs in dict (clean + matches selection)
@@ -694,12 +694,6 @@ def export_background_and_idmap(
         select = m > 0
         bg_mask[select] = 0
 
-        # write mask_background.bin as RLE u32 LE (1=background, 0=region)
-        bg_rle = _rle_encode_binary_mask(bg_mask)
-        with open(out_bg_bin, "wb") as f:
-            f.write(bg_rle.astype("<u4", copy=False).tobytes())
-
-
         #use the REAL region id (new_id), not enumerate()
         region_id = int(mapping_dict.get(orig_idx, 0)) if mapping_dict else 0
         if region_id <= 0:
@@ -711,6 +705,7 @@ def export_background_and_idmap(
         id_map_rgba[select, 2] = (region_id >> 16) & 0xFF
         id_map_rgba[select, 3] = (region_id >> 24) & 0xFF
 
+    # write mask_background.bin as RLE u32 LE (1=background, 0=region)
     bg_rle = _rle_encode_binary_mask(bg_mask)
     with open(out_bg_bin, "wb") as f:
         f.write(bg_rle.astype("<u4", copy=False).tobytes())
