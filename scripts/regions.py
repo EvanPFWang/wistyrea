@@ -64,6 +64,9 @@ def export_metadata(
     if mapping_dict_to_morton_sort is None:
         mapping_dict_to_morton_sort = {int(orig): int(j) for j,orig in enumerate(sorted_idxs,start=1)}
 
+
+    new_hier = update_hierarchy_vectorized(hier, sorted_idxs, mapping_dict_to_morton_sort)
+
     #top,mapping_dict = _stable_top_level_indices(hier,contours,shape_hw,return_mapping=True)
     regions = []
 
@@ -75,14 +78,13 @@ def export_metadata(
         #bounding box
         ys,xs = np.where(m > 0)
         if xs.size > 0:
-            x0,x1 = int(xs.min()),int(xs.max())
+            x0,x1 = int(xs.min()),int(xs.max())#EDGES???
             y0,y1 = int(ys.min()),int(ys.max())
             bbox = {
-                "x": x0,
+                "x": x0,#FROM THE BOTTOM LEFT???
                 "y": y0,
                 "width": x1 - x0 + 1,
-                "height": y1 - y0 + 1,
-            }
+                "height": y1 - y0 + 1,}
         else:
             bbox = {"x": 0,"y": 0,"width": 0,"height": 0}
         #centroid (geometric center of mask)
@@ -90,13 +92,17 @@ def export_metadata(
         cx = float(M["m10"] / (M["m00"] + 1e-9))
         cy = float(M["m01"] / (M["m00"] + 1e-9))
 
-        new_id = int(mapping_dict_to_morton_sort[int(i)])
+        new_id=j
+        h_row = new_hier[j - 1]
+
         regions.append(
             {
                 "id": j,
                 "orig_contour_idx": int(i), #debugging / traceability
+                "hierarchy": {"next": int(h_row[0]),    "prev": int(h_row[1]),
+                "first_child": int(h_row[2]),           "parent": int(h_row[3])},
                 "bbox": bbox,
-                "centroid": {"x": cx,"y": cy},
+                "centroid": {"x": cx,                   "y": cy},
                 #reference RLE-encoded mask (.bin) instead of old PNG mask
                 "mask": f"{masks_dir}/shape_{(new_id - 1):03d}.bin",
             }
@@ -107,6 +113,7 @@ def export_metadata(
         "total_regions": len(regions),
         "background_id": 0,
         "regions": regions,
+        "full_hierarchy": new_hier.tolist(),
         "mapping_centroid_ordering": mapping_dict_to_morton_sort
     }
     out_json = Path(out_json)
@@ -482,14 +489,14 @@ def _rle_encode_binary_mask(mask: np.ndarray) -> np.ndarray:
     return np.concatenate(([start_val],run_lengths))
 
 
-def morton_reIDX_export_shape_masks(
+def morton_reIDX_reHier_export_shape_masks(
         contours: List[np.ndarray],
         hier: np.ndarray,
         shape_hw: Tuple[int,int],
         out_dir: Path,
         mask_mode: str = "top",
         vectorization_support_bool: bool = False,
-) -> Tuple[List[Path],Dict[int,int],List[int]]:
+) -> Tuple[List[Path],Dict[int,int],List[int],np.ndarray]:
     """
     Spatially reindex contours using Morton ordering and export each selected region
     as run-length encoded binary mask (.bin)
@@ -547,6 +554,7 @@ def morton_reIDX_export_shape_masks(
     #build mapping from original contour index to new ID (1-based)
     mapping_dict = {int(orig_i): int(new_id) for new_id,orig_i in enumerate(sorted_idxs,start=1)}
 
+    #j new idx
     #generate per-region binary masks and save as RLE-encoded .bin
     for j,orig_idx in enumerate(sorted_idxs,start=1):
         m = np.zeros((h,w),np.uint8)
@@ -559,11 +567,51 @@ def morton_reIDX_export_shape_masks(
         with open(p,"wb") as f:
             f.write(rle_bytes)
         saved.append(p)
-
+    new_hier = update_hierarchy_vectorized(hier, sorted_idxs, mapping_dict)
     #returnlist of saved .bin paths,mapping dictionary,andoriginal indices list
-    return saved,mapping_dict,list(old_idxs)
+    return saved,mapping_dict,list(old_idxs),new_hier
 
 
+def update_hierarchy_vectorized(hier, sorted_idxs, mapping_dict):
+    """
+    Optimized hierarchy re-indexing using NumPy.
+    hier: original hierarchy array (N, 4)
+    sorted_idxs: list of original indices in their new order
+    mapping_dict: {old_idx: new_1based_id}
+    """
+    #prep lookup array O(1) for C-speed indexing
+    map_lookup = np.full(len(hier), -1, dtype=np.int32)
+    for old_i, new_id in mapping_dict.items():
+        map_lookup[old_i] = new_id - 1  #conv to 0-based for internal array
+
+    #extr and translate Child/Parent links: take rows of old hier in NEW order
+    new_hier = np.full((len(sorted_idxs), 4), -1, dtype=np.int32)
+    old_rows = hier[sorted_idxs]
+
+    #vectorized mapping of First_Child (col 2) and Parent (col 3)
+    #use map_lookup on values in old hier rows
+    new_hier[:, 2] = map_lookup[old_rows[:, 2]]
+    new_hier[:, 3] = map_lookup[old_rows[:, 3]]
+
+    #vectorized sib reconstruct (Next/Previous)
+    #w/ new Morton order, siblings are contours that share the same parent.
+    # We identify sequences of identical parents to link them horizontally.
+    parents = new_hier[:, 3]
+
+    #masks where neighbor has same parent
+    #shift parent's array to compare [i] with [i+1]
+    has_next_sibling = (parents[:-1] == parents[1:])
+    has_prev_sibling = (parents[1:] == parents[:-1])
+
+    indices = np.arange(len(sorted_idxs))
+
+    #Next: set col 0 so if i and i+1 share a parent, i.next = i+1
+    new_hier[:-1, 0] = np.where(has_next_sibling, indices[1:], -1)
+
+    #Previous: set col 1 if i and i-1 share a parent, i.prev = i-1
+    new_hier[1:, 1] = np.where(has_prev_sibling, indices[:-1], -1)
+
+    return new_hier
 def colorize_regions(contours: List[np.ndarray],hier: np.ndarray,
                      shape_hw: Tuple[int,int],mapping_dict_to_morton_sort,
                      #mapping is dict forcontours to their new indexes to be colorized in
@@ -830,15 +878,14 @@ def process_image(
     masks_dir_path = _abs_out(out_masks_dir,data_dir)
     masks_dir_path.mkdir(parents=True,exist_ok=True)
 
-    saved_masks,ordered_palette_to_centroid_ordering_dict,original_idxs = (
-        morton_reIDX_export_shape_masks(
+    (saved_masks,ordered_palette_to_centroid_ordering_dict,original_idxs, new_hier) = morton_reIDX_reHier_export_shape_masks(
             contours=contours,
             hier=hierarchy,
             shape_hw=filled.shape,
             out_dir=masks_dir_path,
             mask_mode=mask_mode,
             vectorization_support_bool=False
-        ))
+        )
     #conforms to ordered_palette_to_centroid_ordering_dict
     #We no longer generate coloured overlays or per-region coloured maps here.
     #Instead,onlyfilled mask and RLE-encoded shape masks are produced.
