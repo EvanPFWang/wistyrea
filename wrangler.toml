@@ -3,7 +3,7 @@
 # UPDATED: Added main entry point for worker
 
 name = "wistyrea"
-main = "src/worker.ts"  # ADDED: Entry point for Durable Object worker
+main = "worker.ts"  # ADDED: Entry point for Durable Object worker
 pages_build_output_dir = "dist"
 compatibility_date = "2025-09-04"
 compatibility_flags = ["experimental", "webgpu"]
