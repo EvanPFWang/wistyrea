@@ -163,7 +163,7 @@ def export_palette_json(
                 raise KeyError(f"orig_idx {orig_idx} missing in mapping_dict")
             new_to_rgb[int(new_id)] = {"r": int(r),"g": int(g),"b": int(b)}
 
-    data = {"background_id": 0,"map": new_to_rgb}
+    data = {"background_id": 0,"map": new_to_rgb}#prep final ds
     with open(out_json,"w",encoding="utf-8") as f:
         json.dump(data,f,ensure_ascii=False,indent=2)
     #keep colourmap sidecar
@@ -937,7 +937,7 @@ def process_image(
             mapping_dict=ordered_palette_to_centroid_ordering_dict,
         )
 
-    return edges_closed,filled,contours,hierarchy,saved_masks
+    return edges_closed,filled,contours,hierarchy,saved_masks,new_hier
 
 
 #---------- CLI ----------
@@ -999,7 +999,7 @@ if __name__ == "__main__":
             print(f"WARNING: Could not read --edge '{args.edge}'. Falling back to Canny.",file=sys.stderr)
         else:
             have_edges = (em > 0).astype("uint8") * 255
-    edges,filled,contours,hierarchy,saved = process_image(
+    edges,filled,contours,hierarchy,saved,new_hier = process_image(
         img_path,out_overlay_path=args.overlay,
         out_filled_path=args.filled,out_colour_path=args.color,
         out_masks_dir=args.masks_dir,have_edges=have_edges,
