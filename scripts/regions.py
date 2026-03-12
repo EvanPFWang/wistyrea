@@ -22,7 +22,7 @@ def export_metadata(
         sorted_idxs: Optional[List[int]] = None,
         mapping_dict_to_morton_sort: Optional[Dict[int,int]] = None,
         out_json: str = "metadata.json",
-        masks_dir: str = "shape_masks",) -> None:
+        masks_dir: str = "",) -> None:
     """
     write JSON file describing each region with structure:
 
@@ -104,7 +104,8 @@ def export_metadata(
                 "bbox": bbox,
                 "centroid": {"x": cx,                   "y": cy},
                 #reference RLE-encoded mask (.bin) instead of old PNG mask
-                "mask": f"{masks_dir}/shape_{(new_id - 1):03d}.bin",
+                "mask": (f"shape_{(new_id - 1):03d}.bin" if not masks_dir
+                         else f"{masks_dir}/shape_{(new_id - 1):03d}.bin"),
             }
         )
     meta = {
@@ -278,10 +279,38 @@ def _repo_root_from_this_file() -> Path:
 def _abs_out(p: Union[str,Path],base: Path) -> Path:
     """
     If p is absolute (or drive-rooted on Windows like '\\foo'),use it as-is,
-    otherwise write under 'base'.
+    otherwise write under 'base'
     """
     p = Path(p)
     return p if p.is_absolute() else (base / p)
+
+def _resolve_masks_dir(p: Union[str, Path], data_dir: Path) -> Path:
+    """
+    Resolve mask output paths relative to public/data, while stripping any
+    redundant leading public/data prefix
+    """
+    p = Path(p)
+
+    if p.is_absolute():
+        return p
+
+    parts_lower = [part.lower() for part in p.parts]
+    if len(parts_lower) >= 2 and parts_lower[0] == "public" and parts_lower[1] == "data":
+        p = Path(*p.parts[2:]) if len(p.parts) > 2 else Path(".")
+
+    return data_dir / p
+
+
+def _asset_subdir_for_metadata(asset_dir: Path, data_dir: Path) -> str:
+    """
+    Return a web-friendly relative subdir from public/data to asset_dir
+    "" means file lives directly in public/data
+    """
+    try:
+        rel = asset_dir.relative_to(data_dir).as_posix()
+    except ValueError:
+        rel = asset_dir.name
+    return "" if rel == "." else rel
 
 
 def to_rgba(img_bgr: np.ndarray) -> np.ndarray:
@@ -823,7 +852,7 @@ def process_image(
         out_overlay_path: str = "contours_overlay.png",
         out_filled_path: str = "filled_mask.png",
         out_colour_path: str = "coloured_regions.png",
-        out_masks_dir: str = "shape_masks",
+        out_masks_dir: str = ".",
         have_edges: Optional[np.ndarray] = None,
         min_area: int = 20,
         gap_close: int = 1,
@@ -875,8 +904,8 @@ def process_image(
     data_dir.mkdir(parents=True,exist_ok=True)
 
     #masks_dir: honor absolute paths; otherwise force under public/data
-    masks_dir_path = _abs_out(out_masks_dir,data_dir)
-    masks_dir_path.mkdir(parents=True,exist_ok=True)
+    masks_dir_path = _resolve_masks_dir(out_masks_dir, data_dir)
+    masks_dir_path.mkdir(parents=True, exist_ok=True)
 
     (saved_masks,ordered_palette_to_centroid_ordering_dict,original_idxs, new_hier) = morton_reIDX_reHier_export_shape_masks(
             contours=contours,
@@ -918,15 +947,16 @@ def process_image(
     )
 
     #export metadata describingregions
+    mask_ref_dir = _asset_subdir_for_metadata(masks_dir_path, data_dir)
+
     export_metadata(
         contours,
         hierarchy,
         filled.shape,
         mapping_dict_to_morton_sort=ordered_palette_to_centroid_ordering_dict,
         out_json=str(data_dir / "metadata.json"),
-        masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),
+        masks_dir=mask_ref_dir,
     )
-
     #persistpalette for use byweb app (if generated)
     if palette is not None:
         #pass empty list forcolourmap parameter since no longer generate preview image
@@ -967,7 +997,7 @@ if __name__ == "__main__":
     parser.add_argument("--overlay",default="contours_overlay.png",help="Output: contours overlay (BGR)")
     parser.add_argument("--filled",default="filled_mask.png",help="Output: filled binary mask")
     parser.add_argument("--color",default="coloured_regions.png",help="Output: per-region coloured map")
-    parser.add_argument("--masks_dir",default="public\data\shape_masks",help="Output dir for per-region masks")
+    parser.add_argument("--masks_dir", default=".", help="Output dir for per-region masks")
     parser.add_argument("--blur",type=int,default=1,help="Gaussian blur kernel (odd). 1 disables smoothing")
     parser.add_argument("--canny_sigma",type=float,default=0.33,help="Auto-Canny sigma")
     parser.add_argument("--close",dest="gap_close",type=int,default=1,
