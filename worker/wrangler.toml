@@ -1,0 +1,19 @@
+# wistyrea-backend — Sidecar Worker for Durable Objects
+# Deployed as a standalone Worker; Pages binds to it via script_name.
+
+name = "wistyrea-backend"
+main = "../worker.ts"
+compatibility_date = "2025-09-04"
+compatibility_flags = ["experimental", "webgpu"]
+
+[vars]
+NODE_VERSION = "20"
+PYTHON_VERSION = "3.10"
+
+[[durable_objects.bindings]]
+name = "MURAL_STATE"
+class_name = "MuralStateObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MuralStateObject"]
