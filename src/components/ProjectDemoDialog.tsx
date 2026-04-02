@@ -19,12 +19,10 @@ interface ProjectDemoDialogProps {
 export function ProjectDemoDialog({ region, open, onOpenChange }: ProjectDemoDialogProps) {
   if (!region?.project) return null;
 
-  const { title, blurb, href } = region.project;
-  
-  // TODO: Add these fields to your types
-  const videoUrl = ''; // Add to project data
-  const demoUrl = href; // Can be iframe or external link
-  const keywords = ['WebGPU', 'Interactive', 'React'];
+  const { title, blurb, href, keywords } = region.project;
+
+  const videoUrl = '';
+  const demoUrl = href;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

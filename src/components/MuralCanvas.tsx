@@ -6,6 +6,7 @@ import { Region, RGB } from '../types';
 interface MuralCanvasProps {
   baseImage: HTMLImageElement | null;
   hoveredRegion: Region | null;
+  activeRegions: Region[];
   canvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
   onPointerMove: (e: React.PointerEvent<HTMLCanvasElement>) => void;
   onClick: (e: React.PointerEvent<HTMLCanvasElement>) => void;
@@ -16,6 +17,7 @@ interface MuralCanvasProps {
 export function MuralCanvas({
   baseImage,
   hoveredRegion,
+  activeRegions,
   canvasRef,
   onPointerMove,
   onClick,
@@ -23,6 +25,7 @@ export function MuralCanvas({
   fetchMask,
 }: MuralCanvasProps) {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const outlineCanvasRef = useRef<HTMLCanvasElement>(null);
 
   //reusable temp canvas to avoid allocation on every hover
   const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -59,6 +62,80 @@ export function MuralCanvas({
     tempCanvasRef.current.width = baseImage.width;
     tempCanvasRef.current.height = baseImage.height;
   }, [baseImage]);
+
+  //draw active outlines (once, for regions with projects)
+  useEffect(() => {
+    if (!baseImage || !outlineCanvasRef.current || activeRegions.length === 0) return;
+
+    const outlineCanvas = outlineCanvasRef.current;
+    outlineCanvas.width = baseImage.width;
+    outlineCanvas.height = baseImage.height;
+    const ctx = outlineCanvas.getContext('2d', { alpha: true });
+    if (!ctx) return;
+
+    let cancelled = false;
+
+    const drawOutlines = async () => {
+      for (const region of activeRegions) {
+        if (cancelled) return;
+        const maskResult = await fetchMask(region.id);
+        if (cancelled || !maskResult) continue;
+
+        const { imageData, x: ox, y: oy } = maskResult;
+        const { width: w, height: h } = imageData;
+        const src = imageData.data;
+        const color = getRegionColor(region.id);
+
+        //edge detection: pixel is edge if alpha>0 and any 4-neighbor has alpha=0
+        const outlineData = ctx.createImageData(w, h);
+        const dst = outlineData.data;
+
+        for (let py = 0; py < h; py++) {
+          for (let px = 0; px < w; px++) {
+            const i = (py * w + px) * 4;
+            if (src[i + 3] === 0) continue; //not part of mask
+
+            const isEdge =
+              px === 0 || px === w - 1 || py === 0 || py === h - 1 ||
+              src[((py - 1) * w + px) * 4 + 3] === 0 ||
+              src[((py + 1) * w + px) * 4 + 3] === 0 ||
+              src[(py * w + px - 1) * 4 + 3] === 0 ||
+              src[(py * w + px + 1) * 4 + 3] === 0;
+
+            if (isEdge) {
+              dst[i] = color.r;
+              dst[i + 1] = color.g;
+              dst[i + 2] = color.b;
+              dst[i + 3] = 255;
+            }
+          }
+        }
+
+        //thicken outline by drawing shifted copies
+        const thickCanvas = document.createElement('canvas');
+        thickCanvas.width = w + 4;
+        thickCanvas.height = h + 4;
+        const thickCtx = thickCanvas.getContext('2d')!;
+        const tmpImg = document.createElement('canvas');
+        tmpImg.width = w;
+        tmpImg.height = h;
+        tmpImg.getContext('2d')!.putImageData(outlineData, 0, 0);
+
+        for (let dy = -2; dy <= 2; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            if (dx * dx + dy * dy <= 4) { //circular kernel
+              thickCtx.drawImage(tmpImg, 2 + dx, 2 + dy);
+            }
+          }
+        }
+
+        ctx.drawImage(thickCanvas, ox - 2, oy - 2);
+      }
+    };
+
+    drawOutlines();
+    return () => { cancelled = true; };
+  }, [baseImage, activeRegions, fetchMask, getRegionColor]);
 
   //draw hover overlay
   //cancellation flag prevent stale mask renders
@@ -148,6 +225,11 @@ export function MuralCanvas({
           onPointerMove={onPointerMove}
           onClick={onClick}
           className="max-w-full max-h-screen cursor-crosshair"
+          style={{ imageRendering: 'crisp-edges' }}
+        />
+        <canvas
+          ref={outlineCanvasRef}
+          className="absolute top-0 left-0 pointer-events-none max-w-full max-h-screen"
           style={{ imageRendering: 'crisp-edges' }}
         />
         <canvas

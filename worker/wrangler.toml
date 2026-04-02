@@ -4,7 +4,6 @@
 name = "wistyrea-backend"
 main = "../worker.ts"
 compatibility_date = "2025-09-04"
-compatibility_flags = ["experimental", "webgpu"]
 
 [vars]
 NODE_VERSION = "20"

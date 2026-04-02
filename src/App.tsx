@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useState } from 'react';
+import { useMemo } from 'react';
 import { useMuralController } from './hooks/useMuralController';
 import { MuralCanvas } from './components/MuralCanvas';
 import { ProjectPreviewCard } from './components/ProjectPreviewCard';
@@ -18,22 +18,25 @@ export function App() {
     fetchMask,
     getRegionColor,
     setSelectedRegion,
+    activeRegions,
+    bboxToViewport,
   } = useMuralController();
 
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const activeRegionsList = useMemo(() => activeRegions(), [activeRegions]);
 
   const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     handlePointerMove(e);
-    setMousePosition({ x: e.clientX, y: e.clientY });
   };
 
   const handleCanvasClick = (e: React.PointerEvent<HTMLCanvasElement>) => {
     handleClick(e);
-    if (selectedRegion?.project) {
-      setDialogOpen(true);
-    }
   };
+
+  // Compute viewport bbox for hovered region (used by preview card positioning)
+  const hoveredViewportBbox = useMemo(() => {
+    if (!hoveredRegion?.project) return null;
+    return bboxToViewport(hoveredRegion.bbox);
+  }, [hoveredRegion, bboxToViewport]);
 
   if (loading) {
     return (
@@ -59,6 +62,7 @@ export function App() {
       <MuralCanvas
         baseImage={baseImage}
         hoveredRegion={hoveredRegion}
+        activeRegions={activeRegionsList}
         canvasRef={canvasRef}
         onPointerMove={handleCanvasPointerMove}
         onClick={handleCanvasClick}
@@ -66,20 +70,19 @@ export function App() {
         fetchMask={fetchMask}
       />
 
-      {/* Hover Preview Card */}
-      {hoveredRegion?.project && (
+      {/* Quadrant-Based Preview Card */}
+      {hoveredRegion?.project && hoveredViewportBbox && (
         <ProjectPreviewCard
           region={hoveredRegion}
-          position={mousePosition}
+          viewportBbox={hoveredViewportBbox}
         />
       )}
 
-      {/* Full Demo Dialog */}
+      {/* Full Demo Dialog (on click) */}
       <ProjectDemoDialog
         region={selectedRegion}
-        open={dialogOpen}
+        open={!!selectedRegion?.project}
         onOpenChange={(open) => {
-          setDialogOpen(open);
           if (!open) setSelectedRegion(null);
         }}
       />

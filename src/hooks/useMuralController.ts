@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Metadata, Region, Palette, RGB } from '../types';
 import { RLEDecoder } from '../lib/rle-decoder';
+import { PROJECT_ASSIGNMENTS } from '../config/projects';
 
 const RAW_BASE = import.meta.env.BASE_URL ?? '/';
 const BASE = RAW_BASE.endsWith('/') ? RAW_BASE : RAW_BASE + '/';
@@ -132,9 +133,12 @@ export function useMuralController(options: UseMuralControllerOptions = {}) {
         };
         setPalette(normalizedPalette);
 
-        //build regions map
+        //build regions map, applying project assignments
         const regionsMap = new Map<number, Region>();
-        meta.regions.forEach(r => regionsMap.set(r.id, r));
+        meta.regions.forEach(r => {
+          const project = PROJECT_ASSIGNMENTS[r.id];
+          regionsMap.set(r.id, project ? { ...r, project } : r);
+        });
         setRegions(regionsMap);
 
         //extract metadata directory
@@ -318,6 +322,29 @@ export function useMuralController(options: UseMuralControllerOptions = {}) {
     return palette?.map[String(regionId)] ?? { r: 255, g: 215, b: 0 };
   }, [palette]);
 
+  //regions that have projects assigned (for outline rendering)
+  const activeRegions = useCallback((): Region[] => {
+    const result: Region[] = [];
+    regions.forEach(r => { if (r.project) result.push(r); });
+    return result;
+  }, [regions]);
+
+  //convert image-space bbox to viewport-space rect
+  const bboxToViewport = useCallback((bbox: { x: number; y: number; width: number; height: number }) => {
+    if (!canvasRef.current) return { x: 0, y: 0, width: 0, height: 0 };
+    const rect = canvasRef.current.getBoundingClientRect();
+    const idMap = idMapRef.current;
+    if (!idMap) return { x: 0, y: 0, width: 0, height: 0 };
+    const scaleX = rect.width / idMap.width;
+    const scaleY = rect.height / idMap.height;
+    return {
+      x: rect.left + bbox.x * scaleX,
+      y: rect.top + bbox.y * scaleY,
+      width: bbox.width * scaleX,
+      height: bbox.height * scaleY,
+    };
+  }, []);
+
   return {
     metadata,
     palette,
@@ -332,5 +359,7 @@ export function useMuralController(options: UseMuralControllerOptions = {}) {
     fetchMask,
     getRegionColor,
     setSelectedRegion,
+    activeRegions,
+    bboxToViewport,
   };
 }

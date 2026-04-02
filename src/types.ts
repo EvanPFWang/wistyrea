@@ -16,6 +16,7 @@ export interface ProjectInfo {
   title: string;
   href: string;
   blurb: string;
+  keywords: string[];
 }
 
 export interface Region {
