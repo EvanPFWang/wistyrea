@@ -10,7 +10,7 @@ interface MuralCanvasProps {
   onPointerMove: (e: React.PointerEvent<HTMLCanvasElement>) => void;
   onClick: (e: React.PointerEvent<HTMLCanvasElement>) => void;
   getRegionColor: (regionId: number) => RGB;
-  fetchMask: (regionId: number) => Promise<ImageData | null>;
+  fetchMask: (regionId: number) => Promise<{ imageData: ImageData; x: number; y: number } | null>;
 }
 
 export function MuralCanvas({
@@ -23,9 +23,12 @@ export function MuralCanvas({
   fetchMask,
 }: MuralCanvasProps) {
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
-  
+
   //reusable temp canvas to avoid allocation on every hover
   const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  //track previous mask bbox for targeted clear (avoids 3.3M pixel clearRect)
+  const prevBboxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
   //set up canvas dimensions
   useEffect(() => {
@@ -71,28 +74,48 @@ export function MuralCanvas({
       //clear overlay
       overlayCtx.clearRect(0, 0, overlayCanvasRef.current.width, overlayCanvasRef.current.height);
 
-      if (!hoveredRegion) return;
+      if (!hoveredRegion) {
+        //clear temp canvas bbox residue when mouse leaves all regions
+        if (prevBboxRef.current && tempCanvasRef.current) {
+          const tmpCtx = tempCanvasRef.current.getContext('2d');
+          if (tmpCtx) {
+            const { x, y, w, h } = prevBboxRef.current;
+            tmpCtx.clearRect(x, y, w, h);
+          }
+          prevBboxRef.current = null;
+        }
+        return;
+      }
 
       //current region ID before async operation
       const currentRegionId = hoveredRegion.id;
       
       //ftch mask
-      const maskData = await fetchMask(currentRegionId);
-      
+      const maskResult = await fetchMask(currentRegionId);
+
       //check if request still relevant after async fetch
       if (cancelled) return;
-      if (!maskData) return;
+      if (!maskResult) return;
 
       //reuse temp canvas instead of creating new one
       const tmp = tempCanvasRef.current;
       if (!tmp) return;
-      
+
       const tmpCtx = tmp.getContext('2d');
       if (!tmpCtx) return;
-      
-      //clear and draw mask data
-      tmpCtx.clearRect(0, 0, tmp.width, tmp.height);
-      tmpCtx.putImageData(maskData, 0, 0);
+
+      //clear only previous mask bbox instead of full 2560×1305 canvas
+      if (prevBboxRef.current) {
+        const { x, y, w, h } = prevBboxRef.current;
+        tmpCtx.clearRect(x, y, w, h);
+      } else {
+        tmpCtx.clearRect(0, 0, tmp.width, tmp.height);
+      }
+      tmpCtx.putImageData(maskResult.imageData, maskResult.x, maskResult.y);
+      prevBboxRef.current = {
+        x: maskResult.x, y: maskResult.y,
+        w: maskResult.imageData.width, h: maskResult.imageData.height
+      };
 
       //get region color
       const color = getRegionColor(currentRegionId);

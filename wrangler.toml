@@ -10,7 +10,7 @@ compatibility_flags = ["experimental", "webgpu"]
 
 [vars]
 NODE_VERSION = "20"
-PYTHON_VERSION = "3.9"
+PYTHON_VERSION = "3.10"
 
 # Binding for stateful Durable Object that handles mural data
 # NOTE: SQLite-backed DOs ARE supported on free tier as of late 2024
@@ -25,7 +25,7 @@ new_sqlite_classes = ["MuralStateObject"]  # SQLite backend (recommended, free t
 # Production environment
 [env.production.vars]
 NODE_VERSION = "20"
-PYTHON_VERSION = "3.9"
+PYTHON_VERSION = "3.10"
 
 [[env.production.durable_objects.bindings]]
 name = "MURAL_STATE"

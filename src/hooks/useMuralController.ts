@@ -214,29 +214,32 @@ export function useMuralController(options: UseMuralControllerOptions = {}) {
 
   //fetch + decode mask for region
   //in-flight dedupe + abort signal support
-  const fetchMask = useCallback(async (regionId: number): Promise<ImageData | null> => {
-    //check cache
+  //returns bbox-sized ImageData and its top-left position within the full canvas
+  const fetchMask = useCallback(async (regionId: number): Promise<{ imageData: ImageData; x: number; y: number } | null> => {
+    const region = regions.get(regionId);
+    if (!region?.mask) return null;
+
+    //check cache — re-attach position from metadata (not stored in cache)
     const cached = maskCacheRef.current.get(regionId);
     if (cached) {
-      return cached;
+      return { imageData: cached, x: region.bbox.x, y: region.bbox.y };
     }
 
-    //check if fetch alr in progress (dedupe)
+    //check if fetch already in progress (dedupe)
     const pending = pendingFetchesRef.current.get(regionId);
     if (pending) {
-      return pending;
+      return pending.then(imgData =>
+        imgData ? { imageData: imgData, x: region.bbox.x, y: region.bbox.y } : null
+      );
     }
 
-    const region = regions.get(regionId);
-    if (!region?.mask || !idMapRef.current) return null;
-
-    //create tracked promise for dedupe
+    //create tracked promise for dedupe (stores only ImageData, not the wrapper)
     const fetchPromise = (async (): Promise<ImageData | null> => {
       try {
-        const maskPath = region.mask.startsWith('http') 
-          ? region.mask 
+        const maskPath = region.mask.startsWith('http')
+          ? region.mask
           : `${metaDirRef.current}/${region.mask}`;
-        
+
         const res = await fetch(absUrl(maskPath), {
           signal: abortControllerRef.current.signal
         });
@@ -246,13 +249,15 @@ export function useMuralController(options: UseMuralControllerOptions = {}) {
         if (abortControllerRef.current.signal.aborted) return null;
 
         const rleBuffer = await res.arrayBuffer();
-        const outputSize = idMapRef.current!.width * idMapRef.current!.height;
-        
+        //decode at bbox dimensions — .bin is cropped, not full 2560×1305
+        const { width: bw, height: bh } = region.bbox;
+        const outputSize = bw * bh;
+
         const imgData = await decoderRef.current.decode(
           rleBuffer,
           outputSize,
-          idMapRef.current!.width,
-          idMapRef.current!.height,
+          bw,
+          bh,
           abortControllerRef.current.signal
         );
 
@@ -275,7 +280,9 @@ export function useMuralController(options: UseMuralControllerOptions = {}) {
     })();
 
     pendingFetchesRef.current.set(regionId, fetchPromise);
-    return fetchPromise;
+    return fetchPromise.then(imgData =>
+      imgData ? { imageData: imgData, x: region.bbox.x, y: region.bbox.y } : null
+    );
   }, [regions]);
 
   //handle pointer move

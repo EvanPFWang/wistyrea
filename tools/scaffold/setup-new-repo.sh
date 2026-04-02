@@ -108,7 +108,7 @@ EOF
 # Create runtime.txt
 echo "🐍 Creating runtime.txt..."
 cat > runtime.txt << 'EOF'
-python-3.9
+python-3.10
 EOF
 
 # Create requirements.txt

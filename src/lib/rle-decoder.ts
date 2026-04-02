@@ -139,58 +139,55 @@ export class RLEDecoder {
       usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
     });
 
-    const bindGroup = device.createBindGroup({
-      layout: this.computePipeline!.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: inputBuf } },
-        { binding: 1, resource: { buffer: outputBuf } },
-        { binding: 2, resource: { buffer: paramBuf } }
-      ]
-    });
+    try {
+      const bindGroup = device.createBindGroup({
+        layout: this.computePipeline!.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: { buffer: inputBuf } },
+          { binding: 1, resource: { buffer: outputBuf } },
+          { binding: 2, resource: { buffer: paramBuf } }
+        ]
+      });
 
-    const encoder = device.createCommandEncoder();
-    const pass = encoder.beginComputePass();
-    pass.setPipeline(this.computePipeline!);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(1);
-    pass.end();
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(this.computePipeline!);
+      pass.setBindGroup(0, bindGroup);
+      pass.dispatchWorkgroups(1);
+      pass.end();
 
-    encoder.copyBufferToBuffer(outputBuf, 0, stagingBuf, 0, outputByteSize);
-    device.queue.submit([encoder.finish()]);
+      encoder.copyBufferToBuffer(outputBuf, 0, stagingBuf, 0, outputByteSize);
+      device.queue.submit([encoder.finish()]);
 
-    await stagingBuf.mapAsync(GPUMapMode.READ);
+      await stagingBuf.mapAsync(GPUMapMode.READ);
 
-    //ifmaborted after async GPU work
-    if (signal?.aborted) {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      const rawData = new Uint32Array(stagingBuf.getMappedRange());
+
+      const imgData = new ImageData(width, height);
+      const px = imgData.data;
+      for (let i = 0; i < outputSize; i++) {
+        const val = rawData[i];
+        if (val > 0) {
+          const idx = i * 4;
+          px[idx] = 255;
+          px[idx + 1] = 255;
+          px[idx + 2] = 255;
+          px[idx + 3] = 255;
+        }
+      }
+
+      return imgData;
+    } finally {
+      //destroy all GPU buffers regardless of success, abort, or device loss
       stagingBuf.unmap();
       inputBuf.destroy();
       outputBuf.destroy();
       paramBuf.destroy();
       stagingBuf.destroy();
-      throw new DOMException('Aborted', 'AbortError');
     }
-
-    const rawData = new Uint32Array(stagingBuf.getMappedRange());
-
-    const imgData = new ImageData(width, height);
-    const px = imgData.data;
-    for (let i = 0; i < outputSize; i++) {
-      const val = rawData[i];
-      if (val > 0) {
-        const idx = i * 4;
-        px[idx] = 255;
-        px[idx + 1] = 255;
-        px[idx + 2] = 255;
-        px[idx + 3] = 255;
-      }
-    }
-
-    stagingBuf.unmap();
-    inputBuf.destroy();
-    outputBuf.destroy();
-    paramBuf.destroy();
-    stagingBuf.destroy();
-
-    return imgData;
   }
 }

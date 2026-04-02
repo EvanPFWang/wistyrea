@@ -21,8 +21,9 @@ def export_metadata(
         *,
         sorted_idxs: Optional[List[int]] = None,
         mapping_dict_to_morton_sort: Optional[Dict[int,int]] = None,
+        id_to_bbox: Optional[Dict[int,Dict[str,int]]] = None,
         out_json: str = "metadata.json",
-        masks_dir: str = "",) -> None:
+        masks_dir: str = "shape_masks",) -> None:
     """
     write JSON file describing each region with structure:
 
@@ -72,25 +73,30 @@ def export_metadata(
 
     #j are the new_idx
     for j,i in enumerate(sorted_idxs,start=1):
-        #generate binary mask for bbox and centroid calculation
-        m = np.zeros((h,w),np.uint8)#draws (i-1)th 
-        _draw_subtree_gray(m,contours,hier,int(i),255,0,line_type=cv.LINE_8)
-        #bounding box
-        ys,xs = np.where(m > 0)
-        if xs.size > 0:
-            x0,x1 = int(xs.min()),int(xs.max())#EDGES???
-            y0,y1 = int(ys.min()),int(ys.max())
-            bbox = {
-                "x": x0,#FROM THE BOTTOM LEFT???
-                "y": y0,
-                "width": x1 - x0 + 1,
-                "height": y1 - y0 + 1,}
+        #bbox: use authoritative id_to_bbox from morton export if available,
+        #otherwise fall back to subtree-drawn mask (legacy path)
+        if id_to_bbox is not None and j in id_to_bbox:
+            bbox = id_to_bbox[j]
         else:
-            bbox = {"x": 0,"y": 0,"width": 0,"height": 0}
-        #centroid (geometric center of mask)
-        M = cv.moments(m,binaryImage=True)
-        cx = float(M["m10"] / (M["m00"] + 1e-9))
-        cy = float(M["m01"] / (M["m00"] + 1e-9))
+            m = np.zeros((h,w),np.uint8)
+            _draw_subtree_gray(m,contours,hier,int(i),255,0,line_type=cv.LINE_8)
+            ys,xs = np.where(m > 0)
+            if xs.size > 0:
+                x0,x1 = int(xs.min()),int(xs.max())
+                y0,y1 = int(ys.min()),int(ys.max())
+                bbox = {"x": x0,"y": y0,
+                        "width": x1 - x0 + 1,"height": y1 - y0 + 1}
+            else:
+                bbox = {"x": 0,"y": 0,"width": 0,"height": 0}
+
+        #centroid from contour moments (cheap, no full mask needed)
+        M = cv.moments(contours[i])
+        if abs(M["m00"]) > 1e-9:
+            cx = float(M["m10"] / M["m00"])
+            cy = float(M["m01"] / M["m00"])
+        else:
+            cx = float(bbox["x"] + bbox["width"] * 0.5)
+            cy = float(bbox["y"] + bbox["height"] * 0.5)
 
         new_id=j
         h_row = new_hier[j - 1]
@@ -104,8 +110,7 @@ def export_metadata(
                 "bbox": bbox,
                 "centroid": {"x": cx,                   "y": cy},
                 #reference RLE-encoded mask (.bin) instead of old PNG mask
-                "mask": (f"shape_{(new_id - 1):03d}.bin" if not masks_dir
-                         else f"{masks_dir}/shape_{(new_id - 1):03d}.bin"),
+                "mask": f"{masks_dir}/shape_{(new_id - 1):03d}.bin",
             }
         )
     meta = {
@@ -205,8 +210,6 @@ import numpy as np
 
 import json
 
-from scipy.stats import alpha
-
 
 def _part1by1(n: np.ndarray) -> np.ndarray:
     n = n & 0x0000FFFF
@@ -279,38 +282,10 @@ def _repo_root_from_this_file() -> Path:
 def _abs_out(p: Union[str,Path],base: Path) -> Path:
     """
     If p is absolute (or drive-rooted on Windows like '\\foo'),use it as-is,
-    otherwise write under 'base'
+    otherwise write under 'base'.
     """
     p = Path(p)
     return p if p.is_absolute() else (base / p)
-
-def _resolve_masks_dir(p: Union[str, Path], data_dir: Path) -> Path:
-    """
-    Resolve mask output paths relative to public/data, while stripping any
-    redundant leading public/data prefix
-    """
-    p = Path(p)
-
-    if p.is_absolute():
-        return p
-
-    parts_lower = [part.lower() for part in p.parts]
-    if len(parts_lower) >= 2 and parts_lower[0] == "public" and parts_lower[1] == "data":
-        p = Path(*p.parts[2:]) if len(p.parts) > 2 else Path(".")
-
-    return data_dir / p
-
-
-def _asset_subdir_for_metadata(asset_dir: Path, data_dir: Path) -> str:
-    """
-    Return a web-friendly relative subdir from public/data to asset_dir
-    "" means file lives directly in public/data
-    """
-    try:
-        rel = asset_dir.relative_to(data_dir).as_posix()
-    except ValueError:
-        rel = asset_dir.name
-    return "" if rel == "." else rel
 
 
 def to_rgba(img_bgr: np.ndarray) -> np.ndarray:
@@ -525,33 +500,23 @@ def morton_reIDX_reHier_export_shape_masks(
         out_dir: Path,
         mask_mode: str = "top",
         vectorization_support_bool: bool = False,
-) -> Tuple[List[Path],Dict[int,int],List[int],np.ndarray]:
+) -> Tuple[List[Path],Dict[int,int],List[int],np.ndarray,Dict[int,Dict[str,int]]]:
     """
     Spatially reindex contours using Morton ordering and export each selected region
-    as run-length encoded binary mask (.bin)
+    as run-length encoded binary mask (.bin), cropped to its bounding box.
 
-    returned mapping
-    dictionary maps original contour indices to new 1-based region IDs.
-
-    contours : List[np.ndarray]
-        Contours detected inimage.
-    hier : np.ndarray
-        Hierarchy array from cv.findContours.
-    shape_hw : Tuple[int,int]
-        Height and width ofimage (h,w).
-    out_dir : Path
-        Directory where.bin files will be written.
-    mask_mode : str,optional
-        Determines which contours to export: "top" for top-level contours,
-        "even" for even-depth contours,or "all" for every contour. Default is "top".
-    vectorization_support_bool : bool,optional
-        Retained for backwards compatibility; unused in this implementation.
-
-    returns list of paths towritten .bin files,mapping from original
-        contour index to 1-based new ID,and list oforiginal contour
-        indices selected for export
-
-    Tuple[List[Path],Dict[int,int],List[int]]
+    Returns
+    -------
+    saved : List[Path]
+        Paths to written .bin files.
+    mapping_dict : Dict[int,int]
+        Original contour index -> 1-based new region ID.
+    old_idxs : List[int]
+        Original contour indices selected for export.
+    new_hier : np.ndarray
+        Re-indexed hierarchy array.
+    id_to_bbox : Dict[int,Dict[str,int]]
+        Authoritative bbox per region ID (matches .bin crop exactly).
     """
     out_dir.mkdir(parents=True,exist_ok=True)
     h,w = shape_hw
@@ -585,11 +550,25 @@ def morton_reIDX_reHier_export_shape_masks(
 
     #j new idx
     #generate per-region binary masks and save as RLE-encoded .bin
+    #id_to_bbox is the single source of truth for crop dimensions (P0 fix)
+    id_to_bbox: Dict[int,Dict[str,int]] = {}
     for j,orig_idx in enumerate(sorted_idxs,start=1):
         m = np.zeros((h,w),np.uint8)
         draw(m,int(orig_idx))
-        #encode mask to RLE binary data
-        rle = _rle_encode_binary_mask(m)
+        #crop mask to its bounding box before encoding to minimise .bin size
+        ys,xs = np.where(m > 0)
+        if xs.size > 0:
+            x0,y0 = int(xs.min()),int(ys.min())
+            x1,y1 = int(xs.max()),int(ys.max())
+            m_crop = m[y0:y1 + 1,x0:x1 + 1]
+            id_to_bbox[j] = {"x": x0,"y": y0,
+                             "width": x1 - x0 + 1,"height": y1 - y0 + 1}
+        else:
+            #empty region: 1x1 zero crop so encoder has valid input
+            m_crop = m[0:1,0:1]
+            id_to_bbox[j] = {"x": 0,"y": 0,"width": 0,"height": 0}
+        #encode cropped mask to RLE binary data
+        rle = _rle_encode_binary_mask(m_crop)
         #write RLE buffer to .bin file (little-endian 32-bit unsigned integers)
         p = out_dir / f"shape_{(j - 1):03d}.bin"
         rle_bytes = rle.astype("<u4",copy=False).tobytes()
@@ -598,7 +577,7 @@ def morton_reIDX_reHier_export_shape_masks(
         saved.append(p)
     new_hier = update_hierarchy_vectorized(hier, sorted_idxs, mapping_dict)
     #returnlist of saved .bin paths,mapping dictionary,andoriginal indices list
-    return saved,mapping_dict,list(old_idxs),new_hier
+    return saved,mapping_dict,list(old_idxs),new_hier,id_to_bbox
 
 
 def update_hierarchy_vectorized(hier, sorted_idxs, mapping_dict):
@@ -852,7 +831,7 @@ def process_image(
         out_overlay_path: str = "contours_overlay.png",
         out_filled_path: str = "filled_mask.png",
         out_colour_path: str = "coloured_regions.png",
-        out_masks_dir: str = ".",
+        out_masks_dir: str = "shape_masks",
         have_edges: Optional[np.ndarray] = None,
         min_area: int = 20,
         gap_close: int = 1,
@@ -904,10 +883,10 @@ def process_image(
     data_dir.mkdir(parents=True,exist_ok=True)
 
     #masks_dir: honor absolute paths; otherwise force under public/data
-    masks_dir_path = _resolve_masks_dir(out_masks_dir, data_dir)
-    masks_dir_path.mkdir(parents=True, exist_ok=True)
+    masks_dir_path = _abs_out(out_masks_dir,data_dir)
+    masks_dir_path.mkdir(parents=True,exist_ok=True)
 
-    (saved_masks,ordered_palette_to_centroid_ordering_dict,original_idxs, new_hier) = morton_reIDX_reHier_export_shape_masks(
+    (saved_masks,ordered_palette_to_centroid_ordering_dict,original_idxs, new_hier, id_to_bbox) = morton_reIDX_reHier_export_shape_masks(
             contours=contours,
             hier=hierarchy,
             shape_hw=filled.shape,
@@ -947,16 +926,16 @@ def process_image(
     )
 
     #export metadata describingregions
-    mask_ref_dir = _asset_subdir_for_metadata(masks_dir_path, data_dir)
-
     export_metadata(
         contours,
         hierarchy,
         filled.shape,
         mapping_dict_to_morton_sort=ordered_palette_to_centroid_ordering_dict,
+        id_to_bbox=id_to_bbox,
         out_json=str(data_dir / "metadata.json"),
-        masks_dir=mask_ref_dir,
+        masks_dir=masks_dir_path.name if masks_dir_path.is_absolute() else str(Path("shape_masks")),
     )
+
     #persistpalette for use byweb app (if generated)
     if palette is not None:
         #pass empty list forcolourmap parameter since no longer generate preview image
@@ -997,7 +976,7 @@ if __name__ == "__main__":
     parser.add_argument("--overlay",default="contours_overlay.png",help="Output: contours overlay (BGR)")
     parser.add_argument("--filled",default="filled_mask.png",help="Output: filled binary mask")
     parser.add_argument("--color",default="coloured_regions.png",help="Output: per-region coloured map")
-    parser.add_argument("--masks_dir", default=".", help="Output dir for per-region masks")
+    parser.add_argument("--masks_dir",default="public\data\shape_masks",help="Output dir for per-region masks")
     parser.add_argument("--blur",type=int,default=1,help="Gaussian blur kernel (odd). 1 disables smoothing")
     parser.add_argument("--canny_sigma",type=float,default=0.33,help="Auto-Canny sigma")
     parser.add_argument("--close",dest="gap_close",type=int,default=1,
