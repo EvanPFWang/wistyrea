@@ -4,6 +4,9 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+.claude/
+.agents/
+
 
 # Build outputs
 dist/

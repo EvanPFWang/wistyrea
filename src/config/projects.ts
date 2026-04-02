@@ -1,5 +1,6 @@
 // src/config/projects.ts
-// Maps region IDs to project info. Add entries here to assign projects to bricks.
+// Maps region IDs → project info. Add entries here to assign projects to bricks.
+// PROJECT_IDS is used by useFamilyLoader to keep project shapes always loaded.
 import { ProjectInfo } from '../types';
 
 export const PROJECT_ASSIGNMENTS: Record<number, ProjectInfo> = {
@@ -18,3 +19,9 @@ export const PROJECT_ASSIGNMENTS: Record<number, ProjectInfo> = {
     keywords: ['OpenCV', 'Segmentation', 'Fluorescence', 'Microscopy', 'Perlin Noise'],
   },
 };
+
+/** Frozen set of region IDs that have project assignments — used by useFamilyLoader
+ *  to guarantee these shapes are always in the DOM (always glowing). */
+export const PROJECT_IDS: ReadonlySet<number> = Object.freeze(
+  new Set(Object.keys(PROJECT_ASSIGNMENTS).map(Number)),
+);
