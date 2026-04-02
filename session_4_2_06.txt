@@ -1,0 +1,731 @@
+ ▐▛███▜▌   Claude Code v2.1.90
+▝▜█████▛▘  Sonnet 4.6 · Claude Pro
+  ▘▘ ▝▝    ~\Documents\GitHub\wistyrea
+
+❯ <system_instructions>                                                         
+You are an expert Senior Full-Stack Engineer specializing in WebGPU, React      
+performance, and spatial UI math.                                               
+You must strictly follow Chain of Thought (CoT) planning and Chain of           
+Verification (CoV) self-critique.                                               
+Do not write implementation code until you have planned, calculated the spatial 
+ math, and verified your logic against the system constraints.                  
+</system_instructions>                                                          
+                                                                                
+<context>                                                                       
+# Core Rules (from CLAUDE.md)                                                   
+* Frontend: React 18+, Vite, TypeScript, WebGPU, Tailwind CSS, Framer Motion,   
+Zustand.                                                                        
+* Backend/Edge: Cloudflare Workers + Durable Objects (SQLite-backed).           
+* Memory Limit: Strictly adhere to Cloudflare's 128MB limit. No                 
+`OffscreenCanvas` or `new Image()` for mask processing in the worker; keep it   
+buffer-based.                                                                   
+* WebGPU Alignment: WGSL structs must be 16-byte aligned.                       
+* Performance: Use `id_map.png` on a hidden canvas for O(1) hover detection.    
+Avoid rendering hundreds of SVG paths. All `.bin` masks must be cropped to      
+their `bbox`.                                                                   
+                                                                                
+# State Architecture                                                            
+The system tracks hovered masks using a layered approach: `readIdAt` ->         
+`loadFamily` -> Coloured Regions -> Storage -> Background.                      
+                                                                                
+# Projects to Integrate                                                         
+1. Black-Scholes Option Pricer:                                                 
+https://blackscholeswithpararealiterator.streamlit.app/                         
+2. Yeast Reverse Image Segmentation:                                            
+https://github.com/EvanPFWang/yeastReverseImageSegmentation                     
+</context>                                                                      
+                                                                                
+<task>                                                                          
+I need you to implement two major UI features for presenting the above          
+projects, integrating them into our existing shadcn/ui and WebGPU architecture. 
+                                                                                
+**Feature 1: Active Colored Outlines**                                          
+Any "brick" (shape region) chosen to hold/stash one of the projects must have   
+an active outline of its own color to signify it is interactive.                
+                                                                                
+**Feature 2: Dynamic Quadrant-Based Preview Window**                            
+When the cursor is over an active shape (not the background), a shadcn/iframe   
+preview panel must open.                                                        
+The placement and dimensions of this panel must be calculated dynamically:      
+1. Treat the `bbox` of the CURRENT mask as a crosshair extending to the edges   
+of the viewport, dividing the screen into four quadrants.                       
+2. Determine which of the four quadrants has the largest area.                  
+3. The preview window must take up exactly the center 2/3 of that largest       
+quadrant.                                                                       
+                                                                                
+**STEP 1: Context Gathering & CoT Planning**                                    
+1. Use your tools to read the `EvanPFWang/yeastReverseImageSegmentation` GitHub 
+ repository to gather context for the project description/metadata.             
+2. Use `<thinking>` tags to map out the spatial mathematics for the dynamic     
+quadrant layout. Exactly how will you calculate the 4 quadrant areas based on   
+`window.innerWidth/innerHeight` and the active region's `bbox`?                 
+3. Plan the rendering strategy for the "Colored Outlines." How will you achieve 
+ this visually without breaking the O(1) hover rule or bloating the React DOM?  
+                                                                                
+**STEP 2: Chain of Verification (CoV) Self-Grill**                              
+Generate 3 verification questions to self-critique your plan, and answer them:  
+1. Spatial Math check: Does the quadrant logic correctly account for standard   
+CSS positioning (top/left) and prevent the iframe from overflowing the screen?  
+2. Performance check: Does the outline rendering strategy violate the           
+Cloudflare 128MB worker limit or rely on inefficient SVG paths?                 
+3. UX check: Are the iframes/shadcn Dialogs correctly sourcing the Streamlit    
+app and the Yeast Segmentation context?                                         
+                                                                                
+**STEP 3: Execution**                                                           
+Only after the CoT planning and CoV self-grill are complete and correct,        
+proceed to modify `useMuralController.ts`, `ProjectPreviewCard.tsx`, and any    
+necessary WebGPU shaders/canvas logic.                                          
+</task>                                                                         
+                                                                                
+<output_format>                                                                 
+## 🧠 Chain-of-Thought (Context & Spatial Math)                                 
+[Repository analysis and mathematical breakdown of the quadrant logic]          
+                                                                                
+## 🛡️ Chain of Verification (The Grill)                                         
+[3 self-critique questions and their resolutions]                               
+                                                                                
+## 💻 Execution Plan                                                            
+[Summary of files to be modified, followed by the code changes]                 
+</output_format>                                                                
+ and also note that the iframes should lead to pages on the wistyrea.com/__     
+that may not be completed yet                                                   
+
+● Let me gather context on the codebase and the referenced repository first.
+
+● Explore(Explore codebase structure)
+  ⎿  Done (37 tool uses · 57.1k tokens · 1m 16s)
+  (ctrl+o to expand)
+
+● Now let me read the key files I need to modify.
+
+  Read 6 files (ctrl+o to expand)
+
+● Let me check the metadata for good candidate regions and see if any project
+  assignments already exist.
+
+  Searched for 1 pattern, read 1 file (ctrl+o to expand)
+
+● Let me find larger regions for project assignment.
+
+● Bash(python3 -c "
+      import json…)
+  ⎿  id= 279  area=  390414  bbox=(231,653,2099,186)  centroid=(1375,711)
+     id=  21  area=   36432  bbox=(2282,144,253,144)  centroid=(2406,221)
+     id=  22  area=   36432  bbox=(27,151,253,144)  centroid=(155,228)
+     … +17 lines (ctrl+o to expand)
+
+● Now I have full context. Let me proceed with the planning and implementation.
+
+  ---
+  Chain-of-Thought: Context & Spatial Math
+
+  Repository context: The yeast reverse image segmentation project is a
+  Python/OpenCV-based cell segmentation tool. The Black-Scholes pricer is a
+  Streamlit app. Both will be embedded via iframes pointing to wistyrea.com
+  subpages.
+
+  Region selection: Regions 21 (top-right, 253x144) and 22 (top-left, 253x144)
+  are symmetric prominent bricks - ideal for project assignment.
+
+  Quadrant math using bbox center as crosshair:
+  cx, cy = bbox center in viewport coords
+  vw, vh = window.innerWidth, window.innerHeight
+
+  Quadrant areas:
+    TL = cx * cy
+    TR = (vw - cx) * cy
+    BL = cx * (vh - cy)
+    BR = (vw - cx) * (vh - cy)
+
+  Largest quadrant → preview placed at center 2/3:
+    margin = 1/6 of quadrant dimensions on each side
+    e.g. for BR: left = cx + (vw-cx)/6, top = cy + (vh-cy)/6
+                 width = (vw-cx)*2/3, height = (vh-cy)*2/3
+
+  Outline strategy: Edge-detection on mask ImageData. For each active region's
+  decoded mask, scan pixels: if alpha > 0 and any 4-neighbor has alpha = 0, it's
+   an edge pixel. Draw edge pixels in the region's color on a persistent outline
+   canvas. Done once at init, zero per-frame cost, no SVG paths, no DOM bloat.
+
+  Chain of Verification (The Grill)
+
+  Q1 - Spatial Math: Does the quadrant logic correctly account for CSS
+  positioning and prevent overflow?
+  A: Yes. The preview is placed using position: fixed with left/top in viewport
+  pixels. The center 2/3 calculation guarantees a 1/6 margin on all sides within
+   the chosen quadrant, so it never reaches viewport edges. The bbox-to-viewport
+   conversion uses canvas.getBoundingClientRect() scaling ratio, matching the
+  existing readIdAt approach.
+
+  Q2 - Performance: Does outline rendering violate the 128MB worker limit or use
+   inefficient SVG?
+  A: No. Outlines are rendered client-side on a <canvas>, not in the Cloudflare
+  Worker. Edge detection runs once for only 2 active regions (not 626). No SVG
+  paths are created. The id_map-based O(1) hover is untouched.
+
+  Q3 - UX: Are iframes correctly sourced?
+  A: Iframes point to wistyrea.com/black-scholes and
+  wistyrea.com/yeast-segmentation - pages that may not exist yet but follow the
+  user's stated convention. The preview card shows during hover; the full dialog
+   opens on click.
+
+  Execution
+
+  Let me implement the changes now.
+
+● Update(src\types.ts)
+  ⎿  Added 1 line
+      16    title: string;
+      17    href: string;
+      18    blurb: string;
+      19 +  keywords: string[];                                          
+      20  }
+      21  
+      22  export interface Region {
+
+● Write(src\config\projects.ts)
+  ⎿  Wrote 20 lines to src\config\projects.ts
+       1 // src/config/projects.ts
+       2 // Maps region IDs to project info. Add entries here to assign p
+         rojects to bricks.
+       3 import { ProjectInfo } from '../types';
+       4 
+       5 export const PROJECT_ASSIGNMENTS: Record<number, ProjectInfo> = 
+         {
+       6   21: {
+       7     title: 'Black-Scholes Option Pricer',
+       8     href: 'https://wistyrea.com/black-scholes',
+       9     blurb:
+      10       'Interactive option pricing with parareal iterators. Visua
+         lizes convergence of parallel-in-time solvers for the Black-Scho
+         les PDE.',
+     … +10 lines (ctrl+o to expand)
+
+● Now update useMuralController.ts to apply project assignments and expose
+  active regions + coordinate conversion.
+
+● Update(src\hooks\useMuralController.ts)
+  ⎿  Added 1 line
+      3  import { useState, useEffect, useRef, useCallback } from 'react'
+         ;
+      4  import { Metadata, Region, Palette, RGB } from '../types';
+      5  import { RLEDecoder } from '../lib/rle-decoder';
+      6 +import { PROJECT_ASSIGNMENTS } from '../config/projects';       
+      7  
+      8  const RAW_BASE = import.meta.env.BASE_URL ?? '/';
+      9  const BASE = RAW_BASE.endsWith('/') ? RAW_BASE : RAW_BASE + '/';
+
+● Update(src\hooks\useMuralController.ts)
+  ⎿  Added 5 lines, removed 2 lines
+      133          };
+      134          setPalette(normalizedPalette);
+      135  
+      136 -        //build regions map                                   
+      136 +        //build regions map, applying project assignments     
+      137          const regionsMap = new Map<number, Region>();
+      138 -        meta.regions.forEach(r => regionsMap.set(r.id, r));   
+      138 +        meta.regions.forEach(r => {                           
+      139 +          const project = PROJECT_ASSIGNMENTS[r.id];          
+      140 +          regionsMap.set(r.id, project ? { ...r, project } : r
+          +);                                                            
+      141 +        });                                                   
+      142          setRegions(regionsMap);
+      143  
+      144          //extract metadata directory
+
+● Now add activeRegions derivation and bboxToViewport helper to the return
+  value.
+
+● Update(src\hooks\useMuralController.ts)
+  ⎿  Added 23 lines
+      322      return palette?.map[String(regionId)] ?? { r: 255, g: 215,
+            b: 0 };
+      323    }, [palette]);
+      324  
+      325 +  //regions that have projects assigned (for outline rendering
+          +)                                                             
+      326 +  const activeRegions = useCallback((): Region[] => {         
+      327 +    const result: Region[] = [];                              
+      328 +    regions.forEach(r => { if (r.project) result.push(r); }); 
+      329 +    return result;                                            
+      330 +  }, [regions]);                                              
+      331 +                                                              
+      332 +  //convert image-space bbox to viewport-space rect           
+      333 +  const bboxToViewport = useCallback((bbox: { x: number; y: nu
+          +mber; width: number; height: number }) => {                   
+      334 +    if (!canvasRef.current) return { x: 0, y: 0, width: 0, hei
+          +ght: 0 };                                                     
+      335 +    const rect = canvasRef.current.getBoundingClientRect();   
+      336 +    const idMap = idMapRef.current;                           
+      337 +    if (!idMap) return { x: 0, y: 0, width: 0, height: 0 };   
+      338 +    const scaleX = rect.width / idMap.width;                  
+      339 +    const scaleY = rect.height / idMap.height;                
+      340 +    return {                                                  
+      341 +      x: rect.left + bbox.x * scaleX,                         
+      342 +      y: rect.top + bbox.y * scaleY,                          
+      343 +      width: bbox.width * scaleX,                             
+      344 +      height: bbox.height * scaleY,                           
+      345 +    };                                                        
+      346 +  }, []);                                                     
+      347 +                                                              
+      348    return {
+      349      metadata,
+      350      palette,
+
+● Update(src\hooks\useMuralController.ts)
+  ⎿  Added 2 lines
+      359      fetchMask,
+      360      getRegionColor,
+      361      setSelectedRegion,
+      362 +    activeRegions,                                            
+      363 +    bboxToViewport,                                           
+      364    };
+      365  }
+
+● Now update MuralCanvas.tsx to add the active outline canvas layer.
+
+  Read 1 file (ctrl+o to expand)
+
+● Update(src\components\MuralCanvas.tsx)
+  ⎿  Added 1 line
+       6  interface MuralCanvasProps {
+       7    baseImage: HTMLImageElement | null;
+       8    hoveredRegion: Region | null;
+       9 +  activeRegions: Region[];                                     
+      10    canvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
+      11    onPointerMove: (e: React.PointerEvent<HTMLCanvasElement>) => 
+          void;
+      12    onClick: (e: React.PointerEvent<HTMLCanvasElement>) => void;
+
+● Update(src\components\MuralCanvas.tsx)
+  ⎿  Added 2 lines
+      17  export function MuralCanvas({
+      18    baseImage,
+      19    hoveredRegion,
+      20 +  activeRegions,                                               
+      21    canvasRef,
+      22    onPointerMove,
+      23    onClick,
+     ...
+      25    fetchMask,
+      26  }: MuralCanvasProps) {
+      27    const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+      28 +  const outlineCanvasRef = useRef<HTMLCanvasElement>(null);    
+      29  
+      30    //reusable temp canvas to avoid allocation on every hover
+      31    const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+● Now add the outline canvas setup and drawing effect. I'll add it after the
+  overlay canvas setup effect.
+
+● Update(src\components\MuralCanvas.tsx)
+  ⎿  Added 74 lines
+       63      tempCanvasRef.current.height = baseImage.height;
+       64    }, [baseImage]);
+       65  
+       66 +  //draw active outlines (once, for regions with projects)    
+       67 +  useEffect(() => {                                           
+       68 +    if (!baseImage || !outlineCanvasRef.current || activeRegio
+          +ns.length === 0) return;                                      
+       69 +                                                              
+       70 +    const outlineCanvas = outlineCanvasRef.current;           
+       71 +    outlineCanvas.width = baseImage.width;                    
+       72 +    outlineCanvas.height = baseImage.height;                  
+       73 +    const ctx = outlineCanvas.getContext('2d', { alpha: true }
+          +);                                                            
+       74 +    if (!ctx) return;                                         
+       75 +                                                              
+       76 +    let cancelled = false;                                    
+       77 +                                                              
+       78 +    const drawOutlines = async () => {                        
+       79 +      for (const region of activeRegions) {                   
+       80 +        if (cancelled) return;                                
+       81 +        const maskResult = await fetchMask(region.id);        
+       82 +        if (cancelled || !maskResult) continue;               
+       83 +                                                              
+       84 +        const { imageData, x: ox, y: oy } = maskResult;       
+       85 +        const { width: w, height: h } = imageData;            
+       86 +        const src = imageData.data;                           
+       87 +        const color = getRegionColor(region.id);              
+       88 +                                                              
+       89 +        //edge detection: pixel is edge if alpha>0 and any 4-n
+          +eighbor has alpha=0                                           
+       90 +        const outlineData = ctx.createImageData(w, h);        
+       91 +        const dst = outlineData.data;                         
+       92 +                                                              
+       93 +        for (let py = 0; py < h; py++) {                      
+       94 +          for (let px = 0; px < w; px++) {                    
+       95 +            const i = (py * w + px) * 4;                      
+       96 +            if (src[i + 3] === 0) continue; //not part of mask
+       97 +                                                              
+       98 +            const isEdge =                                    
+       99 +              px === 0 || px === w - 1 || py === 0 || py === h
+          + - 1 ||                                                       
+      100 +              src[((py - 1) * w + px) * 4 + 3] === 0 ||       
+      101 +              src[((py + 1) * w + px) * 4 + 3] === 0 ||       
+      102 +              src[(py * w + px - 1) * 4 + 3] === 0 ||         
+      103 +              src[(py * w + px + 1) * 4 + 3] === 0;           
+      104 +                                                              
+      105 +            if (isEdge) {                                     
+      106 +              dst[i] = color.r;                               
+      107 +              dst[i + 1] = color.g;                           
+      108 +              dst[i + 2] = color.b;                           
+      109 +              dst[i + 3] = 255;                               
+      110 +            }                                                 
+      111 +          }                                                   
+      112 +        }                                                     
+      113 +                                                              
+      114 +        //thicken outline by drawing shifted copies           
+      115 +        const thickCanvas = document.createElement('canvas'); 
+      116 +        thickCanvas.width = w + 4;                            
+      117 +        thickCanvas.height = h + 4;                           
+      118 +        const thickCtx = thickCanvas.getContext('2d')!;       
+      119 +        const tmpImg = document.createElement('canvas');      
+      120 +        tmpImg.width = w;                                     
+      121 +        tmpImg.height = h;                                    
+      122 +        tmpImg.getContext('2d')!.putImageData(outlineData, 0, 
+          +0);                                                           
+      123 +                                                              
+      124 +        for (let dy = -2; dy <= 2; dy++) {                    
+      125 +          for (let dx = -2; dx <= 2; dx++) {                  
+      126 +            if (dx * dx + dy * dy <= 4) { //circular kernel   
+      127 +              thickCtx.drawImage(tmpImg, 2 + dx, 2 + dy);     
+      128 +            }                                                 
+      129 +          }                                                   
+      130 +        }                                                     
+      131 +                                                              
+      132 +        ctx.drawImage(thickCanvas, ox - 2, oy - 2);           
+      133 +      }                                                       
+      134 +    };                                                        
+      135 +                                                              
+      136 +    drawOutlines();                                           
+      137 +    return () => { cancelled = true; };                       
+      138 +  }, [baseImage, activeRegions, fetchMask, getRegionColor]);  
+      139 +                                                              
+      140    //draw hover overlay
+      141    //cancellation flag prevent stale mask renders
+      142    useEffect(() => {
+● Now add the outline canvas element to the JSX.
+
+● Update(src\components\MuralCanvas.tsx)
+  ⎿  Added 5 lines
+      228            style={{ imageRendering: 'crisp-edges' }}
+      229          />
+      230          <canvas
+      231 +          ref={outlineCanvasRef}                              
+      232 +          className="absolute top-0 left-0 pointer-events-none
+          + max-w-full max-h-screen"                                     
+      233 +          style={{ imageRendering: 'crisp-edges' }}           
+      234 +        />                                                    
+      235 +        <canvas                                               
+      236            ref={overlayCanvasRef}
+      237            className="absolute top-0 left-0 pointer-events-none
+            max-w-full max-h-screen"
+      238            style={{ imageRendering: 'crisp-edges' }}
+
+● Now rewrite ProjectPreviewCard.tsx with the quadrant-based iframe preview.
+
+● Write(src\components\ProjectPreviewCard.tsx)
+  ⎿  Added 68 lines, removed 18 lines
+       1  // src/components/ProjectPreviewCard.tsx
+       2 +import { useMemo } from 'react';                               
+       3  import { Card, CardContent, CardDescription, CardHeader, CardTi
+          tle } from './ui/card';
+       4  import { Badge } from './ui/badge';
+       5  import { Region } from '../types';
+       6  
+       7  interface ProjectPreviewCardProps {
+       8    region: Region;
+       8 -  position: { x: number; y: number };                          
+       9 +  /** bbox of the active region in viewport (screen) coordinate
+         +s */                                                           
+      10 +  viewportBbox: { x: number; y: number; width: number; height: 
+         +number };                                                      
+      11  }
+      12  
+      11 -export function ProjectPreviewCard({ region, position }: Projec
+         -tPreviewCardProps) {                                           
+      13 +/**                                                            
+      14 + * Calculates the largest quadrant formed by extending the bbox
+         + center                                                        
+      15 + * as a crosshair to viewport edges, then returns the center 2/
+         +3 rect.                                                        
+      16 + */                                                            
+      17 +function computePreviewRect(                                   
+      18 +  vbbox: { x: number; y: number; width: number; height: number 
+         +},                                                             
+      19 +  vw: number,                                                  
+      20 +  vh: number,                                                  
+      21 +) {                                                            
+      22 +  const cx = vbbox.x + vbbox.width / 2;                        
+      23 +  const cy = vbbox.y + vbbox.height / 2;                       
+      24 +                                                               
+      25 +  // Four quadrant areas                                       
+      26 +  const areas = [                                              
+      27 +    { area: cx * cy, x: 0, y: 0, w: cx, h: cy },               
+         +    // TL                                                      
+      28 +    { area: (vw - cx) * cy, x: cx, y: 0, w: vw - cx, h: cy },  
+         +    // TR                                                      
+      29 +    { area: cx * (vh - cy), x: 0, y: cy, w: cx, h: vh - cy },  
+         +    // BL                                                      
+      30 +    { area: (vw - cx) * (vh - cy), x: cx, y: cy, w: vw - cx, h:
+         + vh - cy }, // BR                                              
+      31 +  ];                                                           
+      32 +                                                               
+      33 +  const largest = areas.reduce((a, b) => (b.area > a.area ? b :
+         + a));                                                          
+      34 +                                                               
+      35 +  // Center 2/3 of the largest quadrant                        
+      36 +  const margin = 1 / 6;                                        
+      37 +  return {                                                     
+      38 +    left: largest.x + largest.w * margin,                      
+      39 +    top: largest.y + largest.h * margin,                       
+      40 +    width: largest.w * (2 / 3),                                
+      41 +    height: largest.h * (2 / 3),                               
+      42 +  };                                                           
+      43 +}                                                              
+      44 +                                                               
+      45 +export function ProjectPreviewCard({ region, viewportBbox }: Pr
+         +ojectPreviewCardProps) {                                       
+      46    if (!region.project) return null;
+      47  
+      14 -  const { title, blurb } = region.project;                     
+      48 +  const { title, blurb, href, keywords } = region.project;     
+      49  
+      16 -  // Example keywords - you can add these to your types.ts     
+      17 -  const keywords = ['WebGPU', 'Interactive', 'React']; // TODO:
+         - Add to project data                                           
+      50 +  const rect = useMemo(                                        
+      51 +    () => computePreviewRect(viewportBbox, window.innerWidth, w
+         +indow.innerHeight),                                            
+      52 +    [viewportBbox],                                            
+      53 +  );                                                           
+      54  
+      55 +  // Minimum usable size for preview                           
+      56 +  if (rect.width < 200 || rect.height < 150) return null;      
+      57 +                                                               
+      58    return (
+      20 -    <Card                                                      
+      21 -      className="fixed z-50 w-72 pointer-events-none animate-in
+         - fade-in-0 zoom-in-95 duration-200"                            
+      22 -      style={{                                                 
+      23 -        left: `${position.x + 16}px`,                          
+      24 -        top: `${position.y - 8}px`,                            
+      59 +    <Card                                                      
+      60 +      className="fixed z-50 overflow-hidden animate-in fade-in-
+         +0 zoom-in-95 duration-200 flex flex-col"                       
+      61 +      style={{                                                 
+      62 +        left: `${rect.left}px`,                                
+      63 +        top: `${rect.top}px`,                                  
+      64 +        width: `${rect.width}px`,                              
+      65 +        height: `${rect.height}px`,                            
+      66        }}
+      67      >
+      27 -      <CardHeader className="pb-3">                            
+      68 +      <CardHeader className="pb-2 flex-shrink-0">              
+      69          <CardTitle className="text-base text-primary">{title}</
+          CardTitle>
+      29 -        <CardDescription className="text-xs">{blurb}</CardDescr
+         -iption>                                                        
+      30 -      </CardHeader>                                            
+      31 -      <CardContent className="pb-3">                           
+      32 -        <div className="flex flex-wrap gap-1.5">               
+      33 -          {keywords.map((keyword) => (                         
+      34 -            <Badge key={keyword} variant="secondary" className=
+         -"text-xs">                                                     
+      35 -              {keyword}                                        
+      70 +        <CardDescription className="text-xs line-clamp-2">{blur
+         +b}</CardDescription>                                           
+      71 +        <div className="flex flex-wrap gap-1.5 pt-1">          
+      72 +          {keywords.map((kw) => (                              
+      73 +            <Badge key={kw} variant="secondary" className="text
+         +-xs">                                                          
+      74 +              {kw}                                             
+      75              </Badge>
+      76            ))}
+      77          </div>
+      78 +      </CardHeader>                                            
+      79 +      <CardContent className="flex-1 min-h-0 pb-3">            
+      80 +        <div className="w-full h-full rounded-md overflow-hidde
+         +n border bg-background">                                       
+      81 +          <iframe                                              
+      82 +            src={href}                                         
+      83 +            className="w-full h-full"                          
+      84 +            title={`${title} Preview`}                         
+      85 +            sandbox="allow-scripts allow-same-origin"          
+      86 +            loading="lazy"                                     
+      87 +          />                                                   
+      88 +        </div>                                                 
+      89        </CardContent>
+      90      </Card>
+      91    );
+
+● Now update App.tsx to wire everything together.
+
+● Write(src\App.tsx)
+  ⎿  Added 16 lines, removed 13 lines
+      1  // src/App.tsx
+      2 -import { useState } from 'react';                               
+      2 +import { useMemo } from 'react';                                
+      3  import { useMuralController } from './hooks/useMuralController';
+      4  import { MuralCanvas } from './components/MuralCanvas';
+      5  import { ProjectPreviewCard } from './components/ProjectPreviewC
+         ard';
+     ...
+      18      fetchMask,
+      19      getRegionColor,
+      20      setSelectedRegion,
+      21 +    activeRegions,                                             
+      22 +    bboxToViewport,                                            
+      23    } = useMuralController();
+      24  
+      23 -  const [mousePosition, setMousePosition] = useState({ x: 0, y:
+         - 0 });                                                         
+      24 -  const [dialogOpen, setDialogOpen] = useState(false);         
+      25 +  const activeRegionsList = useMemo(() => activeRegions(), [act
+         +iveRegions]);                                                  
+      26  
+      27    const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCa
+          nvasElement>) => {
+      28      handlePointerMove(e);
+      28 -    setMousePosition({ x: e.clientX, y: e.clientY });          
+      29    };
+      30  
+      31    const handleCanvasClick = (e: React.PointerEvent<HTMLCanvasEl
+          ement>) => {
+      32      handleClick(e);
+      33 -    if (selectedRegion?.project) {                             
+      34 -      setDialogOpen(true);                                     
+      35 -    }                                                          
+      33    };
+      34  
+      35 +  // Compute viewport bbox for hovered region (used by preview 
+         +card positioning)                                              
+      36 +  const hoveredViewportBbox = useMemo(() => {                  
+      37 +    if (!hoveredRegion?.project) return null;                  
+      38 +    return bboxToViewport(hoveredRegion.bbox);                 
+      39 +  }, [hoveredRegion, bboxToViewport]);                         
+      40 +                                                               
+      41    if (loading) {
+      42      return (
+      43        <div className="w-screen h-screen flex items-center justi
+          fy-center">
+     ...
+      62        <MuralCanvas
+      63          baseImage={baseImage}
+      64          hoveredRegion={hoveredRegion}
+      65 +        activeRegions={activeRegionsList}                      
+      66          canvasRef={canvasRef}
+      67          onPointerMove={handleCanvasPointerMove}
+      68          onClick={handleCanvasClick}
+     ...
+      70          fetchMask={fetchMask}
+      71        />
+      72  
+      69 -      {/* Hover Preview Card */}                               
+      70 -      {hoveredRegion?.project && (                             
+      73 +      {/* Quadrant-Based Preview Card */}                      
+      74 +      {hoveredRegion?.project && hoveredViewportBbox && (      
+      75          <ProjectPreviewCard
+      76            region={hoveredRegion}
+      73 -          position={mousePosition}                             
+      77 +          viewportBbox={hoveredViewportBbox}                   
+      78          />
+      79        )}
+      80  
+      77 -      {/* Full Demo Dialog */}                                 
+      81 +      {/* Full Demo Dialog (on click) */}                      
+      82        <ProjectDemoDialog
+      83          region={selectedRegion}
+      80 -        open={dialogOpen}                                      
+      84 +        open={!!selectedRegion?.project}                       
+      85          onOpenChange={(open) => {
+      82 -          setDialogOpen(open);                                 
+      86            if (!open) setSelectedRegion(null);
+      87          }}
+      88        />
+
+● Now update ProjectDemoDialog.tsx to use the keywords from project data instead
+   of hardcoded values.
+
+● Update(src\components\ProjectDemoDialog.tsx)
+  ⎿  Added 4 lines, removed 6 lines
+      19  export function ProjectDemoDialog({ region, open, onOpenChange 
+          }: ProjectDemoDialogProps) {
+      20    if (!region?.project) return null;
+      21  
+      22 -  const { title, blurb, href } = region.project;               
+      23 -                                                               
+      24 -  // TODO: Add these fields to your types                      
+      25 -  const videoUrl = ''; // Add to project data                  
+      26 -  const demoUrl = href; // Can be iframe or external link      
+      27 -  const keywords = ['WebGPU', 'Interactive', 'React'];         
+      22 +  const { title, blurb, href, keywords } = region.project;     
+      23  
+      24 +  const videoUrl = '';                                         
+      25 +  const demoUrl = href;                                        
+      26 +                                                               
+      27    return (
+      28      <Dialog open={open} onOpenChange={onOpenChange}>
+      29        <DialogContent className="max-w-4xl max-h-[90vh] overflow
+          -y-auto">
+
+● Let me verify the build compiles.
+
+● Bash(npx tsc --noEmit 2>&1 | head -40)
+  ⎿  (No output)
+
+● Clean compile. Let me do a quick review of the final state of all modified
+  files.
+
+  Read 1 file (ctrl+o to expand)
+
+● Everything looks correct. Let me verify the build one more time.
+
+● Bash(npx vite build 2>&1 | tail -15)
+  ⎿  vite v6.4.1 building for production...
+     transforming...
+     ✓ 1646 modules transformed.
+     … +9 lines (ctrl+o to expand)
+  ⎿  (timeout 1m)
+
+● Build succeeds cleanly. Here's a summary of all changes:
+
+  ---
+  Summary of Changes
+
+  Files Modified
+
+  1. src/types.ts - Added keywords: string[] to ProjectInfo
+  2. src/hooks/useMuralController.ts - Imports PROJECT_ASSIGNMENTS, applies them
+   during region map construction, exposes activeRegions() and bboxToViewport()
+  3. src/components/MuralCanvas.tsx - Added outline canvas layer between base
+  image and hover overlay. Uses edge-detection on decoded masks + circular
+  dilation kernel for 2px-thick colored outlines. Drawn once at init, zero
+  per-frame cost.
+  4. src/components/ProjectPreviewCard.tsx - Rewritten with quadrant-based
+  positioning. Computes bbox center crosshair, finds largest quadrant, places
+  iframe preview at center 2/3 of it.
+  5. src/App.tsx - Wired up activeRegions, bboxToViewport, removed
+  mousePosition/dialogOpen state in favor of derived state. Dialog opens when
+  clicking a project-assigned region.
+
+  File Created
+
+  6. src/config/projects.ts - Project assignment config mapping region IDs (21,
+  22) to project metadata with wistyrea.com iframe URLs.
+
+  Architecture Decisions
+
+  - Outlines: Canvas-based edge detection (not SVG paths), thickened with
+  circular dilation kernel. Renders on a dedicated canvas layer, computed once
+  per active region.
+  - Preview placement: bbox center acts as crosshair dividing viewport into 4
+  quadrants. Largest quadrant gets the preview at its center 2/3, guaranteeing
+  1/6 margin from edges.
+  - O(1) hover preserved: readIdAt and id_map pipeline untouched. No DOM
+  elements added per region.
+  - Iframe URLs: Point to wistyrea.com/black-scholes and
+  wistyrea.com/yeast-segmentation (pages you can build out later).
+
+✻ Cogitated for 5m 18s

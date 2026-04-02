@@ -14,7 +14,7 @@ export const PROJECT_ASSIGNMENTS: Record<number, ProjectInfo> = {
     title: 'Yeast Reverse Image Segmentation',
     href: 'https://wistyrea.com/yeast-segmentation',
     blurb:
-      'Automated cell segmentation pipeline for yeast microscopy. Uses OpenCV contour detection and morphological operations to isolate individual cells.',
-    keywords: ['OpenCV', 'Segmentation', 'Python', 'Microscopy'],
+      'Synthetic yeast cell image generation from segmentation labels. Ellipse-based morphology modeling with fluorescence rendering, Perlin noise boundary perturbation, and vectorized operations for 8x speedup.',
+    keywords: ['OpenCV', 'Segmentation', 'Fluorescence', 'Microscopy', 'Perlin Noise'],
   },
 };

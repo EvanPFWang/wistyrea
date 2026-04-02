@@ -1,6 +1,7 @@
 // src/App.tsx
 import { useMemo } from 'react';
 import { useMuralController } from './hooks/useMuralController';
+import { useFamilyLoader } from './hooks/useFamilyLoader';
 import { MuralCanvas } from './components/MuralCanvas';
 import { ProjectPreviewCard } from './components/ProjectPreviewCard';
 import { ProjectDemoDialog } from './components/ProjectDemoDialog';
@@ -8,6 +9,7 @@ import { ProjectDemoDialog } from './components/ProjectDemoDialog';
 export function App() {
   const {
     metadata,
+    regions,
     hoveredRegion,
     selectedRegion,
     baseImage,
@@ -18,21 +20,16 @@ export function App() {
     fetchMask,
     getRegionColor,
     setSelectedRegion,
-    activeRegions,
     bboxToViewport,
   } = useMuralController();
 
-  const activeRegionsList = useMemo(() => activeRegions(), [activeRegions]);
+  // Morton-ordered family loader: ±50 IDs around hovered region
+  const { familyIds } = useFamilyLoader(
+    hoveredRegion,
+    metadata?.total_regions ?? 0,
+  );
 
-  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    handlePointerMove(e);
-  };
-
-  const handleCanvasClick = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    handleClick(e);
-  };
-
-  // Compute viewport bbox for hovered region (used by preview card positioning)
+  // Viewport bbox for quadrant-based preview positioning
   const hoveredViewportBbox = useMemo(() => {
     if (!hoveredRegion?.project) return null;
     return bboxToViewport(hoveredRegion.bbox);
@@ -56,21 +53,23 @@ export function App() {
         <div>Current: <span className="text-primary">
           {hoveredRegion ? `#${hoveredRegion.id}` : '-'}
         </span></div>
+        <div>Family: <span className="text-primary">{familyIds.size}</span></div>
       </div>
 
-      {/* Mural Canvas */}
+      {/* Mural Canvas + Shape Layer */}
       <MuralCanvas
         baseImage={baseImage}
         hoveredRegion={hoveredRegion}
-        activeRegions={activeRegionsList}
+        familyIds={familyIds}
+        regions={regions}
         canvasRef={canvasRef}
-        onPointerMove={handleCanvasPointerMove}
-        onClick={handleCanvasClick}
+        onPointerMove={handlePointerMove}
+        onClick={handleClick}
         getRegionColor={getRegionColor}
         fetchMask={fetchMask}
       />
 
-      {/* Quadrant-Based Preview Card */}
+      {/* Quadrant-Based Preview Card (hover on project shape) */}
       {hoveredRegion?.project && hoveredViewportBbox && (
         <ProjectPreviewCard
           region={hoveredRegion}
@@ -78,7 +77,7 @@ export function App() {
         />
       )}
 
-      {/* Full Demo Dialog (on click) */}
+      {/* Full Demo Dialog (click on project shape) */}
       <ProjectDemoDialog
         region={selectedRegion}
         open={!!selectedRegion?.project}

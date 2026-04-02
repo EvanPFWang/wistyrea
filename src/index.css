@@ -41,13 +41,31 @@
   .animate-pulse-gold {
     animation: pulse-gold 1.5s ease-in-out infinite;
   }
-  
+
   @keyframes pulse-gold {
     0%, 100% {
       opacity: 1;
     }
     50% {
       opacity: 0.5;
+    }
+  }
+
+  /* Project-linked shape glow: low-frequency drop-shadow pulse.
+     Uses --glow-color CSS variable set inline per element.
+     drop-shadow() respects alpha channel → contour-accurate glow. */
+  .project-glow {
+    animation: shape-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes shape-glow {
+    0%, 100% {
+      filter: drop-shadow(0 0 4px var(--glow-color))
+              drop-shadow(0 0 8px var(--glow-color));
+    }
+    50% {
+      filter: drop-shadow(0 0 10px var(--glow-color))
+              drop-shadow(0 0 20px var(--glow-color));
     }
   }
 }

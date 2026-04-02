@@ -3,43 +3,12 @@ import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Region } from '../types';
+import { computeQuadrantPreviewRect } from '../lib/quadrant';
 
 interface ProjectPreviewCardProps {
   region: Region;
-  /** bbox of the active region in viewport (screen) coordinates */
+  /** Bbox of the active region in viewport (screen) coordinates */
   viewportBbox: { x: number; y: number; width: number; height: number };
-}
-
-/**
- * Calculates the largest quadrant formed by extending the bbox center
- * as a crosshair to viewport edges, then returns the center 2/3 rect.
- */
-function computePreviewRect(
-  vbbox: { x: number; y: number; width: number; height: number },
-  vw: number,
-  vh: number,
-) {
-  const cx = vbbox.x + vbbox.width / 2;
-  const cy = vbbox.y + vbbox.height / 2;
-
-  // Four quadrant areas
-  const areas = [
-    { area: cx * cy, x: 0, y: 0, w: cx, h: cy },                   // TL
-    { area: (vw - cx) * cy, x: cx, y: 0, w: vw - cx, h: cy },      // TR
-    { area: cx * (vh - cy), x: 0, y: cy, w: cx, h: vh - cy },      // BL
-    { area: (vw - cx) * (vh - cy), x: cx, y: cy, w: vw - cx, h: vh - cy }, // BR
-  ];
-
-  const largest = areas.reduce((a, b) => (b.area > a.area ? b : a));
-
-  // Center 2/3 of the largest quadrant
-  const margin = 1 / 6;
-  return {
-    left: largest.x + largest.w * margin,
-    top: largest.y + largest.h * margin,
-    width: largest.w * (2 / 3),
-    height: largest.h * (2 / 3),
-  };
 }
 
 export function ProjectPreviewCard({ region, viewportBbox }: ProjectPreviewCardProps) {
@@ -48,7 +17,7 @@ export function ProjectPreviewCard({ region, viewportBbox }: ProjectPreviewCardP
   const { title, blurb, href, keywords } = region.project;
 
   const rect = useMemo(
-    () => computePreviewRect(viewportBbox, window.innerWidth, window.innerHeight),
+    () => computeQuadrantPreviewRect(viewportBbox, window.innerWidth, window.innerHeight),
     [viewportBbox],
   );
 
